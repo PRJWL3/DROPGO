@@ -7,15 +7,25 @@ A premium ride-booking application inspired by Ola/Uber/Rapido/BlaBla, built wit
 
 ---
 
-## 🚀 Features
+## 🚀 Special Features
 
-- **Draggable Bottom Sheets**: Rapido/Uber-style draggable sheets for home search, category selection, and live tracking.
-- **Dual-Field Search**: Completely separate inputs for Pickup and Destination with real-time autocompletes, custom markers, and recent paths.
-- **Real Road Routing**: Uses Google Directions/Routes API to draw true road paths and polylines rather than basic straight lines.
-- **Dynamic Camera Fitting**: Autocenter and fit map camera bounds to cover the rider, driver, and destination.
-- **Live Simulator**: Integrates driver live-tracking simulation, updates trip status, and triggers support SOS features.
-
+- 🔄 **Driver & Rider Convertible App** – Users can switch between Rider mode and Driver mode within the same application.
+- 📅 **Flexible Driver Scheduling** – Drivers can schedule their availability and choose when they want to accept rides.
+- 🗺️ **Real-Time Live Tracking** – Live GPS tracking with road-based route rendering and smooth ride updates.
+- 📱 **Universal Responsive Design** – Optimized for phones, tablets, and foldable devices.
 ---
+
+## 🚀 Features 
+
+- Ride booking
+- Live driver tracking
+- Real road route rendering
+- Expandable live-tracking panel
+- Call, chat, and share actions
+- Smooth marker animations
+- Live ETA updates
+- Flutter + Google Maps integration
+- Riverpod state management
 
 ## 🛠️ Tech Stack
 
