@@ -7,7 +7,7 @@ A premium ride-booking application inspired by Ola/Uber/Rapido/BlaBla, built wit
 
 ---
 
-## 🚀 Special Features
+## ✨ Special Features
 
 - 🔄 **Driver & Rider Convertible App** – Users can switch between Rider mode and Driver mode within the same application.
 - 📅 **Flexible Driver Scheduling** – Drivers can schedule their availability and choose when they want to accept rides.
