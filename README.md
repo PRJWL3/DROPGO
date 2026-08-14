@@ -1,6 +1,6 @@
 # DropGo (TaxiTown) 🚕
 
-A premium ride-booking application inspired by Ola/Uber/Rapido, built with Flutter, Riverpod, and Google Maps API.
+A premium ride-booking application inspired by Ola/Uber/Rapido/BlaBla, built with Flutter, Riverpod, and Google Maps API.
 
 > [!IMPORTANT]
 > **Developer Mode Notice**: This application is currently in active development / developer mode. Some configurations, mock simulations, and APIs are tailored for development testing.
