@@ -15,15 +15,11 @@ DROPGO is a modern Flutter-based bike ride-sharing application designed for fast
 
 ## 🚀 Features
 
-- Ride booking
-- Live driver tracking
-- Real road route rendering
-- Expandable live-tracking panel
-- Call, chat, and share actions
-- Smooth marker animations
-- Live ETA updates
-- Flutter + Google Maps integration
-- Riverpod state management
+- 📱 **Draggable Bottom Sheets**: Rapido/Uber-style draggable sheets for home search, category selection, and live tracking.
+- 🔍 **Dual-Field Search**: Completely separate inputs for Pickup and Destination with real-time autocompletes, custom markers, and recent paths.
+- 🛣️ **Real Road Routing**: Uses Google Directions/Routes API to draw true road paths and polylines rather than basic straight lines.
+- 🎯 **Dynamic Camera Fitting**: Autocenter and fit map camera bounds to cover the rider, driver, and destination.
+- ⚡ **Live Simulator**: Integrates driver live-tracking simulation, updates trip status, and triggers support SOS features.
 
 ---
 
