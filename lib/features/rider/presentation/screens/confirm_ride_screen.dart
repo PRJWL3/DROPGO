@@ -18,6 +18,13 @@ class ConfirmRideScreen extends ConsumerWidget {
     final bookingState = ref.watch(rideBookingNotifierProvider);
     final bookingNotifier = ref.read(rideBookingNotifierProvider.notifier);
 
+    ref.listen<String?>(rideErrorProvider, (previous, next) {
+      if (next != null) {
+        context.showSnackBar(next, backgroundColor: Colors.red);
+        ref.read(rideErrorProvider.notifier).state = null;
+      }
+    });
+
     if (bookingState.pickup == null || bookingState.destination == null) {
       return const Scaffold(
         backgroundColor: AppColors.background,

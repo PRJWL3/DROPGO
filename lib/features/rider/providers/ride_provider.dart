@@ -202,25 +202,64 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
     // Cancel old stream subscription
     _rideSubscription?.cancel();
 
-    // Create the ride request document inside Cloud Firestore / Local Simulation
-    await FirebaseService.createRideRequest(
-      rideId: rideId,
-      riderId: riderId,
-      riderName: riderName,
-      pickupAddress: pickup.name,
-      pickupLat: pickup.latitude,
-      pickupLng: pickup.longitude,
-      destinationAddress: destination.name,
-      destinationLat: destination.latitude,
-      destinationLng: destination.longitude,
-      distanceKm: distance,
-      durationMinutes: duration,
-      estimatedFare: state.price,
-      paymentMethod: 'Cash',
-    );
+    debugPrint("Searching for drivers...");
+    List<Map<String, dynamic>> eligibleDrivers = [];
+    try {
+      eligibleDrivers = await FirebaseService.queryEligibleDrivers();
+      debugPrint("Drivers returned: ${eligibleDrivers.length}");
+      for (var driver in eligibleDrivers) {
+        debugPrint("driverId: ${driver['driverId']}");
+        debugPrint("vehicleType: ${driver['vehicleType']}");
+        debugPrint("isOnline: ${driver['isOnline']}");
+        debugPrint("isAvailable: ${driver['isAvailable']}");
+        debugPrint("location: (${driver['currentLatitude']}, ${driver['currentLongitude']})");
+      }
+      if (eligibleDrivers.isEmpty) {
+        debugPrint("NO ELIGIBLE DRIVERS FOUND");
+      }
+    } catch (e) {
+      debugPrint("Driver query failed: $e");
+      if (e is TimeoutException) {
+        _ref.read(rideErrorProvider.notifier).state = "Connection timed out. Check Firebase connection.";
+      } else {
+        _ref.read(rideErrorProvider.notifier).state = "Error connecting: $e";
+      }
+      state = state.copyWith(status: RiderStatus.noDriversAvailable);
+      return;
+    }
 
-    // Setup client-side visual fail-safe trigger (runs if no driver accepts within 16s)
-    Timer(const Duration(seconds: 16), () {
+    try {
+      // Create the ride request document inside Cloud Firestore / Local Simulation
+      await FirebaseService.createRideRequest(
+        rideId: rideId,
+        riderId: riderId,
+        riderName: riderName,
+        pickupAddress: pickup.name,
+        pickupLat: pickup.latitude,
+        pickupLng: pickup.longitude,
+        destinationAddress: destination.name,
+        destinationLat: destination.latitude,
+        destinationLng: destination.longitude,
+        distanceKm: distance,
+        durationMinutes: duration,
+        estimatedFare: state.price,
+        paymentMethod: 'Cash',
+      );
+      
+      debugPrint("RIDER: Ride created: $rideId");
+    } catch (e) {
+      debugPrint("Ride creation failed: $e");
+      if (e is TimeoutException) {
+        _ref.read(rideErrorProvider.notifier).state = "Connection timed out. Check Firebase connection.";
+      } else {
+        _ref.read(rideErrorProvider.notifier).state = "Error creating ride: $e";
+      }
+      state = state.copyWith(status: RiderStatus.noDriversAvailable);
+      return;
+    }
+
+    // Setup client-side visual fail-safe trigger (runs if no driver accepts within 61s)
+    Timer(const Duration(seconds: 61), () {
       if (state.status == RiderStatus.searching) {
         debugPrint("No drivers available nearby");
         state = state.copyWith(status: RiderStatus.noDriversAvailable);
@@ -411,3 +450,5 @@ final rideBookingNotifierProvider = StateNotifierProvider<RideBookingNotifier, R
   final prefs = ref.watch(sharedPreferencesProvider);
   return RideBookingNotifier(prefs, ref);
 });
+
+final rideErrorProvider = StateProvider<String?>((ref) => null);

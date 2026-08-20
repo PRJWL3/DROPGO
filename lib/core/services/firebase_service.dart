@@ -21,12 +21,21 @@ class FirebaseService {
   /// Initializes Firebase Core and Cloud Messaging safely
   static Future<void> initialize() async {
     try {
-      // Wrap initialization to prevent crashes on untargeted builds
       await Firebase.initializeApp();
       isFirebaseAvailable = true;
-      debugPrint("FIREBASE MODE: Cross-device ride request enabled");
       
-      // Request FCM permissions and configure background triggers
+      String projectId = "Unknown";
+      try {
+        projectId = Firebase.app().options.projectId;
+      } catch (_) {}
+      
+      debugPrint("FIREBASE INITIALIZED");
+      debugPrint("FIREBASE MODE");
+      debugPrint("Firebase Project ID: $projectId");
+      
+      // Run Firestore Diagnostic Test
+      runFirestoreDiagnostic("diag_${DateTime.now().millisecondsSinceEpoch}");
+
       final messaging = FirebaseMessaging.instance;
       await messaging.requestPermission(
         alert: true,
@@ -38,8 +47,8 @@ class FirebaseService {
       FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
     } catch (e) {
       isFirebaseAvailable = false;
+      debugPrint("FIREBASE INITIALIZATION FAILED. Error: $e");
       debugPrint("LOCAL SIMULATION MODE");
-      debugPrint("Error: $e");
     }
   }
 
@@ -49,6 +58,64 @@ class FirebaseService {
       await Firebase.initializeApp();
     } catch (_) {}
     debugPrint("Handling background FCM push payload: ${message.data}");
+  }
+
+  /// Runs connection diagnostic write, read, and delete tests
+  static Future<void> runFirestoreDiagnostic(String deviceId) async {
+    if (!isFirebaseAvailable) {
+      debugPrint("Diagnostic skipped: Firebase not initialized.");
+      return;
+    }
+    final ref = FirebaseFirestore.instance.collection('connection_test').doc(deviceId);
+    
+    // Test Write
+    bool writeSuccess = false;
+    try {
+      await ref.set({
+        'test': 'success',
+        'timestamp': FieldValue.serverTimestamp(),
+      }).timeout(const Duration(seconds: 15));
+      writeSuccess = true;
+      debugPrint("Firestore write: SUCCESS");
+    } catch (e) {
+      if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
+        debugPrint("PERMISSION-DENIED: Failed during diagnostic write. Error: $e");
+      } else {
+        debugPrint("Firestore write: FAILED. Error: $e");
+      }
+    }
+
+    // Test Read
+    if (writeSuccess) {
+      try {
+        final doc = await ref.get().timeout(const Duration(seconds: 15));
+        if (doc.exists && doc.data()?['test'] == 'success') {
+          debugPrint("Firestore read: SUCCESS");
+        } else {
+          debugPrint("Firestore read: FAILED (document empty or missing)");
+        }
+      } catch (e) {
+        if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
+          debugPrint("PERMISSION-DENIED: Failed during diagnostic read. Error: $e");
+        } else {
+          debugPrint("Firestore read: FAILED. Error: $e");
+        }
+      }
+    } else {
+      debugPrint("Firestore read: FAILED (skipped write)");
+    }
+
+    // Test Delete
+    try {
+      await ref.delete().timeout(const Duration(seconds: 15));
+      debugPrint("Firestore delete: SUCCESS");
+    } catch (e) {
+      if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
+        debugPrint("PERMISSION-DENIED: Failed during diagnostic delete. Error: $e");
+      } else {
+        debugPrint("Firestore delete: FAILED. Error: $e");
+      }
+    }
   }
 
   /// Registers or updates driver status in Firestore or local memory
@@ -76,17 +143,79 @@ class FirebaseService {
       'currentLatitude': lat,
       'currentLongitude': lng,
       'fcmToken': token,
-      'updatedAt': FieldValue.serverTimestamp(),
+      'updatedAt': isFirebaseAvailable ? FieldValue.serverTimestamp() : DateTime.now(),
     };
 
     if (isFirebaseAvailable) {
-      await FirebaseFirestore.instance.collection('drivers').doc(driverId).set(data, SetOptions(merge: true));
+      try {
+        final docRef = FirebaseFirestore.instance.collection('drivers').doc(driverId);
+        
+        // Write to Firestore with 15s timeout
+        await docRef.set(data, SetOptions(merge: true)).timeout(const Duration(seconds: 15));
+        
+        // Immediately read back to verify existence
+        final snapshot = await docRef.get().timeout(const Duration(seconds: 15));
+        final exists = snapshot.exists;
+        
+        debugPrint("Driver ID: $driverId");
+        debugPrint("Driver Firestore path: ${docRef.path}");
+        debugPrint("Driver online: $isOnline");
+        debugPrint("Driver available: $isAvailable");
+        debugPrint("Driver vehicle type: bike");
+        debugPrint("Driver location: ($lat, $lng)");
+        debugPrint("Driver document successfully written: $exists");
+        
+        if (!exists) {
+          throw Exception("Document readback returned empty/non-existent");
+        }
+      } catch (e) {
+        if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
+          debugPrint("PERMISSION-DENIED: Failed during updateDriverStatus. Error: $e");
+        } else if (e is TimeoutException) {
+          debugPrint("Connection timed out. Check Firebase connection.");
+        }
+        rethrow;
+      }
     } else {
-      _localDrivers[driverId] = {
-        ...data,
-        'updatedAt': DateTime.now(),
-      };
-      debugPrint("LOCAL SIMULATION MODE: Updated driver status for $driverId: isOnline=$isOnline, isAvailable=$isAvailable");
+      _localDrivers[driverId] = data;
+      
+      debugPrint("Driver ID: $driverId");
+      debugPrint("Driver Firestore path: /drivers/$driverId");
+      debugPrint("Driver online: $isOnline");
+      debugPrint("Driver available: $isAvailable");
+      debugPrint("Driver vehicle type: bike");
+      debugPrint("Driver location: ($lat, $lng)");
+      debugPrint("Driver document successfully written: true");
+    }
+  }
+
+  /// Queries for active and available bike drivers
+  static Future<List<Map<String, dynamic>>> queryEligibleDrivers() async {
+    if (!isFirebaseAvailable) {
+      return _localDrivers.values.where((d) =>
+        d['isOnline'] == true &&
+        d['isAvailable'] == true &&
+        d['vehicleType'] == 'bike'
+      ).cast<Map<String, dynamic>>().toList();
+    }
+
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection('drivers')
+          .where('isOnline', isEqualTo: true)
+          .where('isAvailable', isEqualTo: true)
+          .where('vehicleType', isEqualTo: 'bike')
+          .get()
+          .timeout(const Duration(seconds: 15));
+          
+      return snapshot.docs.map((doc) => doc.data()).toList();
+    } catch (e) {
+      if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
+        debugPrint("PERMISSION-DENIED: Failed to query drivers from Firestore");
+      } else if (e is TimeoutException) {
+        debugPrint("Connection timed out. Check Firebase connection.");
+      }
+      rethrow;
     }
   }
 
@@ -140,10 +269,18 @@ class FirebaseService {
       'expiresAt': isFirebaseAvailable ? Timestamp.fromDate(expiresAt) : expiresAt,
     };
 
-    debugPrint("RIDER: Ride created: $rideId");
-
     if (isFirebaseAvailable) {
-      await FirebaseFirestore.instance.collection('rides').doc(rideId).set(data);
+      try {
+        await FirebaseFirestore.instance.collection('rides').doc(rideId).set(data).timeout(const Duration(seconds: 15));
+        debugPrint("Ride created: $rideId");
+      } catch (e) {
+        if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
+          debugPrint("PERMISSION-DENIED: Failed during createRideRequest write. Error: $e");
+        } else if (e is TimeoutException) {
+          debugPrint("Connection timed out. Check Firebase connection.");
+        }
+        rethrow;
+      }
     } else {
       _localRides[rideId] = data;
       _getOrCreateRideController(rideId).add(data);
@@ -169,8 +306,17 @@ class FirebaseService {
   /// Fetches a ride snapshot (useful on notification tap or app resume)
   static Future<Map<String, dynamic>?> getRide(String rideId) async {
     if (isFirebaseAvailable) {
-      final doc = await FirebaseFirestore.instance.collection('rides').doc(rideId).get();
-      return doc.data();
+      try {
+        final doc = await FirebaseFirestore.instance.collection('rides').doc(rideId).get().timeout(const Duration(seconds: 15));
+        return doc.data();
+      } catch (e) {
+        if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
+          debugPrint("PERMISSION-DENIED: Failed during getRide. Error: $e");
+        } else if (e is TimeoutException) {
+          debugPrint("Connection timed out. Check Firebase connection.");
+        }
+        rethrow;
+      }
     } else {
       return _localRides[rideId];
     }
@@ -239,13 +385,19 @@ class FirebaseService {
           });
 
           return null; // Success
-        });
+        }).timeout(const Duration(seconds: 15));
 
         if (result == null) {
           debugPrint("DRIVER: Ride accepted: $rideId");
         }
         return result;
       } catch (e) {
+        if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
+          debugPrint("PERMISSION-DENIED: Failed during acceptRide transaction. Error: $e");
+        } else if (e is TimeoutException) {
+          debugPrint("Connection timed out. Check Firebase connection.");
+          return "Connection timed out. Check Firebase connection.";
+        }
         return "Transaction failed: $e";
       }
     } else {

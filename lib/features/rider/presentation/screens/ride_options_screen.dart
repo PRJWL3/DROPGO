@@ -101,6 +101,13 @@ class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
 
     final routeInfoAsync = ref.watch(routeInfoProvider(routeArg));
 
+    ref.listen<String?>(rideErrorProvider, (previous, next) {
+      if (next != null && mounted) {
+        context.showSnackBar(next, backgroundColor: Colors.red);
+        ref.read(rideErrorProvider.notifier).state = null;
+      }
+    });
+
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(

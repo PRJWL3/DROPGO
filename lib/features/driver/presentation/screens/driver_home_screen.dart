@@ -69,11 +69,36 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
     if (val) {
       debugPrint("DRIVER: Driver online: d_ramesh");
       
-      final service = ref.read(locationServiceProvider);
-      _fcmToken = await FirebaseService.getFcmToken();
+      try {
+        _fcmToken = await FirebaseService.getFcmToken().timeout(const Duration(seconds: 15));
+        
+        // Step 2: Immediate driver status registration & readback validation
+        await FirebaseService.updateDriverStatus(
+          driverId: "d_ramesh",
+          name: "Ramesh Kumar",
+          phone: "+91 98765 43210",
+          vehicleNumber: "KA-05-AA-5678",
+          rating: 4.8,
+          lat: 12.9716,
+          lng: 77.5946,
+          isOnline: true,
+          isAvailable: true,
+          token: _fcmToken ?? "mock_token",
+        ).timeout(const Duration(seconds: 15));
+      } catch (e) {
+        debugPrint("Driver registration failed: $e");
+        if (mounted) {
+          setState(() {
+            _isOnline = false;
+          });
+          context.showSnackBar("Unable to connect to driver service", backgroundColor: Colors.red);
+        }
+        return; // Abort further updates/listeners
+      }
 
+      final service = ref.read(locationServiceProvider);
       // Listen for GPS updates (throttled every 10 seconds or 50 meters)
-      _positionSubscription = service.getPositionStream().listen((position) {
+      _positionSubscription = service.getPositionStream().listen((position) async {
         if (!mounted || !_isOnline) return;
 
         bool shouldUpdate = false;
@@ -99,47 +124,50 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
           _lastUpdatedPosition = position;
           _lastUpdateTime = now;
 
-          FirebaseService.updateDriverStatus(
-            driverId: "d_ramesh",
-            name: "Ramesh Kumar",
-            phone: "+91 98765 43210",
-            vehicleNumber: "KA-05-AA-5678",
-            rating: 4.8,
-            lat: position.latitude,
-            lng: position.longitude,
-            isOnline: true,
-            isAvailable: true,
-            token: _fcmToken ?? "mock_token",
-          );
+          try {
+            await FirebaseService.updateDriverStatus(
+              driverId: "d_ramesh",
+              name: "Ramesh Kumar",
+              phone: "+91 98765 43210",
+              vehicleNumber: "KA-05-AA-5678",
+              rating: 4.8,
+              lat: position.latitude,
+              lng: position.longitude,
+              isOnline: true,
+              isAvailable: true,
+              token: _fcmToken ?? "mock_token",
+            ).timeout(const Duration(seconds: 15));
+          } catch (e) {
+            debugPrint("Throttled driver status update failed: $e");
+          }
         }
       });
 
       if (FirebaseService.isFirebaseAvailable) {
-        // Real Firestore Cross-device Synchronization
-        _firestoreRidesSubscription = FirebaseFirestore.instance
-            .collection('rides')
-            .where('status', isEqualTo: 'searching')
-            .where('vehicleType', isEqualTo: 'bike')
-            .snapshots()
-            .listen((snapshot) {
-          if (!mounted || !_isOnline) return;
+        try {
+          final query = FirebaseFirestore.instance
+              .collection('rides')
+              .where('status', isEqualTo: 'searching')
+              .where('vehicleType', isEqualTo: 'bike');
 
-          final activeRides = snapshot.docs.where((doc) {
+          // Step 7: Initial fetch of currently active requests
+          final initialSnapshot = await query.get().timeout(const Duration(seconds: 15));
+          final existingRides = initialSnapshot.docs.where((doc) {
             final data = doc.data();
             final expiresTimestamp = data['expiresAt'] as Timestamp?;
             if (expiresTimestamp == null) return false;
             return expiresTimestamp.toDate().isAfter(DateTime.now());
           }).toList();
 
-          debugPrint("DRIVER: Active searching rides: ${activeRides.length}");
+          debugPrint("DRIVER: Active searching rides: ${existingRides.length}");
 
-          for (var doc in activeRides) {
+          for (var doc in existingRides) {
             final rideId = doc.id;
             if (!_notifiedRideIds.contains(rideId)) {
               _notifiedRideIds.add(rideId);
               debugPrint("DRIVER: New ride detected: $rideId");
               debugPrint("DRIVER: Showing ride request: $rideId");
-
+              
               // Prompt incoming request overlay
               Navigator.pushNamed(context, '/incoming-request', arguments: rideId);
             }
@@ -147,10 +175,47 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
 
           if (mounted) {
             setState(() {
-              _searchingRidesList = activeRides.map((doc) => doc.data()).toList();
+              _searchingRidesList = existingRides.map((doc) => doc.data()).toList();
             });
           }
-        });
+
+          // Step 3 & 7: Listen for live updates on new searching requests
+          _firestoreRidesSubscription = query.snapshots().listen((snapshot) {
+            if (!mounted || !_isOnline) return;
+
+            final activeRides = snapshot.docs.where((doc) {
+              final data = doc.data();
+              final expiresTimestamp = data['expiresAt'] as Timestamp?;
+              if (expiresTimestamp == null) return false;
+              return expiresTimestamp.toDate().isAfter(DateTime.now());
+            }).toList();
+
+            debugPrint("DRIVER: Active searching rides: ${activeRides.length}");
+
+            for (var doc in activeRides) {
+              final rideId = doc.id;
+              if (!_notifiedRideIds.contains(rideId)) {
+                _notifiedRideIds.add(rideId);
+                debugPrint("DRIVER: New ride detected: $rideId");
+                debugPrint("DRIVER: Showing ride request: $rideId");
+                
+                // Prompt incoming request overlay
+                Navigator.pushNamed(context, '/incoming-request', arguments: rideId);
+              }
+            }
+
+            if (mounted) {
+              setState(() {
+                _searchingRidesList = activeRides.map((doc) => doc.data()).toList();
+              });
+            }
+          });
+        } catch (e) {
+          debugPrint("Error loading Firestore active requests: $e");
+          if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
+            debugPrint("PERMISSION-DENIED: Failed during rides subscription setup. Error: $e");
+          }
+        }
       } else {
         // Fallback Local Simulation Mode
         _notificationSubscription = FirebaseService.onLocalNotification.listen((payload) {
@@ -173,18 +238,22 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
       }
     } else {
       // Driver going offline: update online status to false and stop location stream
-      FirebaseService.updateDriverStatus(
-        driverId: "d_ramesh",
-        name: "Ramesh Kumar",
-        phone: "+91 98765 43210",
-        vehicleNumber: "KA-05-AA-5678",
-        rating: 4.8,
-        lat: _lastUpdatedPosition?.latitude ?? 12.9716,
-        lng: _lastUpdatedPosition?.longitude ?? 77.5946,
-        isOnline: false,
-        isAvailable: false,
-        token: _fcmToken ?? "mock_token",
-      );
+      try {
+        await FirebaseService.updateDriverStatus(
+          driverId: "d_ramesh",
+          name: "Ramesh Kumar",
+          phone: "+91 98765 43210",
+          vehicleNumber: "KA-05-AA-5678",
+          rating: 4.8,
+          lat: _lastUpdatedPosition?.latitude ?? 12.9716,
+          lng: _lastUpdatedPosition?.longitude ?? 77.5946,
+          isOnline: false,
+          isAvailable: false,
+          token: _fcmToken ?? "mock_token",
+        ).timeout(const Duration(seconds: 15));
+      } catch (e) {
+        debugPrint("Offline status update failed: $e");
+      }
       
       if (mounted) {
         setState(() {
