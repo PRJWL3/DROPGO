@@ -10,6 +10,8 @@ import '../../../rider/presentation/widgets/app_top_bar.dart';
 import '../../../rider/presentation/widgets/bottom_nav_bar.dart';
 import '../../../rider/presentation/widgets/map_preview.dart';
 
+import 'package:flutter/foundation.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'dart:async';
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
