@@ -10,6 +10,7 @@ import '../models/saved_place_model.dart';
 import '../../../services/fake_location_service.dart';
 import '../../../services/fake_tracking_service.dart';
 import '../../../core/services/firebase_service.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 class RideBookingState {
   final RiderStatus status;
@@ -185,16 +186,66 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
 
   void confirmFare() async {
     if (state.status == RiderStatus.searching) return;
-    state = state.copyWith(status: RiderStatus.searching);
 
     final pickup = state.pickup;
     final destination = state.destination;
-    if (pickup == null || destination == null) return;
+    final vehicleType = state.selectedDriverClass;
+    final estimatedFare = state.price;
+
+    // 1. BUTTON TRIGGER
+    debugPrint("========== RIDE REQUEST START ==========");
+    debugPrint("Find Drivers button pressed");
+
+    // 2. VALIDATE RIDER DATA
+    debugPrint("Pickup: ${pickup?.name}");
+    debugPrint("Pickup coordinates: ${pickup?.latitude}, ${pickup?.longitude}");
+    debugPrint("Destination: ${destination?.name}");
+    debugPrint("Destination coordinates: ${destination?.latitude}, ${destination?.longitude}");
+    debugPrint("Vehicle type: $vehicleType");
+    debugPrint("Estimated fare: $estimatedFare");
+
+    if (pickup == null ||
+        destination == null ||
+        pickup.name.isEmpty ||
+        destination.name.isEmpty ||
+        vehicleType.isEmpty ||
+        estimatedFare <= 0) {
+      debugPrint("RIDE REQUEST ABORTED: Missing required data");
+      if (pickup == null) {
+        debugPrint("- pickup is null");
+      } else if (pickup.name.isEmpty) {
+        debugPrint("- pickup address is empty");
+      }
+      if (destination == null) {
+        debugPrint("- destination is null");
+      } else if (destination.name.isEmpty) {
+        debugPrint("- destination address is empty");
+      }
+      if (vehicleType.isEmpty) {
+        debugPrint("- vehicleType is empty");
+      }
+      if (estimatedFare <= 0) {
+        debugPrint("- estimatedFare is non-positive ($estimatedFare)");
+      }
+      
+      _ref.read(rideErrorProvider.notifier).state = "RIDE REQUEST ABORTED: Missing required data";
+      return;
+    }
+
+    state = state.copyWith(status: RiderStatus.searching);
+
+    // 3. GENERATE RIDE ID
+    final rideId = "ride_${DateTime.now().millisecondsSinceEpoch}";
+    debugPrint("Creating ride request...");
+    debugPrint("Ride ID: $rideId");
+
+    // 4. FIREBASE STATUS
+    final fbMode = FirebaseService.isFirebaseAvailable ? "FIREBASE" : "LOCAL SIMULATION";
+    debugPrint("Firebase mode: $fbMode");
+    debugPrint("Firebase initialized: ${FirebaseService.isFirebaseAvailable ? "YES" : "NO"}");
 
     final distance = FakeLocationService.calculateDistance(pickup, destination);
     final duration = distance * 2.0;
-
-    final rideId = "ride_${DateTime.now().millisecondsSinceEpoch}";
     final user = _ref.read(authProvider);
     final riderId = user.uid ?? "user_1234";
     final riderName = user.name ?? "Alex Rider";
@@ -202,33 +253,11 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
     // Cancel old stream subscription
     _rideSubscription?.cancel();
 
-    debugPrint("Searching for drivers...");
-    List<Map<String, dynamic>> eligibleDrivers = [];
+    // 5. FIRESTORE WRITE & 7. FIRESTORE ERRORS
     try {
-      eligibleDrivers = await FirebaseService.queryEligibleDrivers();
-      debugPrint("Drivers returned: ${eligibleDrivers.length}");
-      for (var driver in eligibleDrivers) {
-        debugPrint("driverId: ${driver['driverId']}");
-        debugPrint("vehicleType: ${driver['vehicleType']}");
-        debugPrint("isOnline: ${driver['isOnline']}");
-        debugPrint("isAvailable: ${driver['isAvailable']}");
-        debugPrint("location: (${driver['currentLatitude']}, ${driver['currentLongitude']})");
-      }
-      if (eligibleDrivers.isEmpty) {
-        debugPrint("NO ELIGIBLE DRIVERS FOUND");
-      }
-    } catch (e) {
-      debugPrint("Driver query failed: $e");
-      if (e is TimeoutException) {
-        _ref.read(rideErrorProvider.notifier).state = "Connection timed out. Check Firebase connection.";
-      } else {
-        _ref.read(rideErrorProvider.notifier).state = "Error connecting: $e";
-      }
-      state = state.copyWith(status: RiderStatus.noDriversAvailable);
-      return;
-    }
-
-    try {
+      debugPrint("Writing ride to Firestore...");
+      debugPrint("Firestore path: /rides/$rideId");
+      
       // Create the ride request document inside Cloud Firestore / Local Simulation
       await FirebaseService.createRideRequest(
         rideId: rideId,
@@ -246,14 +275,64 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
         paymentMethod: 'Cash',
       );
       
-      debugPrint("RIDER: Ride created: $rideId");
+      debugPrint("========== RIDE REQUEST CREATED ==========");
+      debugPrint("Ride successfully written to Firestore");
+      debugPrint("Ride ID: $rideId");
+      debugPrint("Status: searching");
     } catch (e) {
-      debugPrint("Ride creation failed: $e");
-      if (e is TimeoutException) {
-        _ref.read(rideErrorProvider.notifier).state = "Connection timed out. Check Firebase connection.";
-      } else {
-        _ref.read(rideErrorProvider.notifier).state = "Error creating ride: $e";
+      debugPrint("========== RIDE REQUEST FAILED ==========");
+      debugPrint("Firestore error:");
+      debugPrint("$e");
+      if (e is FirebaseException) {
+        debugPrint("Error Code: ${e.code}");
       }
+      _ref.read(rideErrorProvider.notifier).state = "Failed to query drivers.";
+      state = state.copyWith(status: RiderStatus.noDriversAvailable);
+      return;
+    }
+
+    // 6. VERIFY THE WRITE
+    debugPrint("Verifying ride document...");
+    try {
+      final verifiedRide = await FirebaseService.getRide(rideId);
+      final exists = verifiedRide != null;
+      debugPrint("Document exists: $exists");
+      if (exists) {
+        debugPrint("Ride ID: ${verifiedRide['rideId']}");
+        debugPrint("Status: ${verifiedRide['status']}");
+        debugPrint("Vehicle type: ${verifiedRide['vehicleType']}");
+        debugPrint("Pickup: ${verifiedRide['pickupAddress']}");
+        debugPrint("Destination: ${verifiedRide['destinationAddress']}");
+        debugPrint("Expires at: ${verifiedRide['expiresAt']}");
+      } else {
+        debugPrint("CRITICAL: Ride write appeared successful but document cannot be read back");
+      }
+    } catch (e) {
+      debugPrint("Verification readback failed: $e");
+    }
+
+    // 8. DRIVER QUERY
+    debugPrint("Searching for online available drivers...");
+    List<Map<String, dynamic>> eligibleDrivers = [];
+    try {
+      eligibleDrivers = await FirebaseService.queryEligibleDrivers();
+      debugPrint("Drivers found: ${eligibleDrivers.length}");
+      for (var driver in eligibleDrivers) {
+        debugPrint("Driver ID: ${driver['driverId']}");
+        debugPrint("Online: ${driver['isOnline']}");
+        debugPrint("Available: ${driver['isAvailable']}");
+        debugPrint("Vehicle type: ${driver['vehicleType']}");
+        debugPrint("Latitude: ${driver['currentLatitude']}");
+        debugPrint("Longitude: ${driver['currentLongitude']}");
+      }
+      if (eligibleDrivers.isEmpty) {
+        debugPrint("========== NO ELIGIBLE DRIVERS ==========");
+        debugPrint("No online and available bike drivers were found.");
+        _ref.read(rideErrorProvider.notifier).state = "No eligible drivers found.";
+      }
+    } catch (e) {
+      debugPrint("Driver query failed: $e");
+      _ref.read(rideErrorProvider.notifier).state = "Failed to query drivers.";
       state = state.copyWith(status: RiderStatus.noDriversAvailable);
       return;
     }

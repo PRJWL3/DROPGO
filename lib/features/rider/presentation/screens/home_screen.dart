@@ -377,6 +377,49 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     ),
                   ),
 
+                  // 3.1. Temporary Debug Button
+                  Positioned(
+                    top: 90,
+                    left: 16,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                        foregroundColor: Colors.white,
+                        elevation: 4,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      ),
+                      icon: const Icon(Icons.bug_report, size: 14),
+                      label: const Text("TEST FIRESTORE RIDE", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                      onPressed: () async {
+                        final timestamp = DateTime.now().millisecondsSinceEpoch;
+                        final testRideId = "test_$timestamp";
+                        final expiresAt = DateTime.now().add(const Duration(seconds: 60));
+                        
+                        debugPrint("========== TEST FIRESTORE WRITE START ==========");
+                        debugPrint("Writing test ride to Firestore...");
+                        debugPrint("Firestore path: /rides/$testRideId");
+
+                        if (FirebaseService.isFirebaseAvailable) {
+                          try {
+                            await FirebaseFirestore.instance.collection('rides').doc(testRideId).set({
+                              'rideId': testRideId,
+                              'status': 'searching',
+                              'vehicleType': 'bike',
+                              'createdAt': FieldValue.serverTimestamp(),
+                              'expiresAt': Timestamp.fromDate(expiresAt),
+                            }).timeout(const Duration(seconds: 15));
+                            
+                            debugPrint("Test ride successfully written to Firestore: $testRideId");
+                          } catch (e) {
+                            debugPrint("Test ride write failed: $e");
+                          }
+                        } else {
+                          debugPrint("Test ride skipped: Firebase is not available.");
+                        }
+                      },
+                    ),
+                  ),
+
                   // 4. Draggable Scrollable Ride Panel
                   _buildDraggableRidePanel(context, activeColors),
                 ],

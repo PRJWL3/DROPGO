@@ -86,6 +86,10 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
           token: _fcmToken ?? "mock_token",
         ).timeout(const Duration(seconds: 15));
         debugPrint("DRIVER LOCATION: 12.9716, 77.5946");
+        
+        debugPrint("========== DRIVER LISTENER STARTED ==========");
+        debugPrint("Driver ID: d_ramesh");
+        debugPrint("Listening for searching bike rides...");
       } catch (e) {
         debugPrint("Driver registration failed: $e");
         if (mounted) {
@@ -161,12 +165,20 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
             return expiresTimestamp.toDate().isAfter(DateTime.now());
           }).toList();
 
-          debugPrint("DRIVER: Active searching rides: ${existingRides.length}");
+          debugPrint("Searching rides received: ${existingRides.length}");
 
           for (var doc in existingRides) {
             final rideId = doc.id;
             if (!_notifiedRideIds.contains(rideId)) {
               _notifiedRideIds.add(rideId);
+              
+              final data = doc.data();
+              debugPrint("========== NEW RIDE DETECTED ==========");
+              debugPrint("Ride ID: $rideId");
+              debugPrint("Pickup: ${data['pickupAddress']}");
+              debugPrint("Destination: ${data['destinationAddress']}");
+              debugPrint("Fare: ${data['estimatedFare']}");
+
               debugPrint("DRIVER: New ride detected: $rideId");
               debugPrint("DRIVER: Showing ride request: $rideId");
               
@@ -192,12 +204,20 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
               return expiresTimestamp.toDate().isAfter(DateTime.now());
             }).toList();
 
-            debugPrint("DRIVER: Active searching rides: ${activeRides.length}");
+            debugPrint("Searching rides received: ${activeRides.length}");
 
             for (var doc in activeRides) {
               final rideId = doc.id;
               if (!_notifiedRideIds.contains(rideId)) {
                 _notifiedRideIds.add(rideId);
+                
+                final data = doc.data();
+                debugPrint("========== NEW RIDE DETECTED ==========");
+                debugPrint("Ride ID: $rideId");
+                debugPrint("Pickup: ${data['pickupAddress']}");
+                debugPrint("Destination: ${data['destinationAddress']}");
+                debugPrint("Fare: ${data['estimatedFare']}");
+
                 debugPrint("DRIVER: New ride detected: $rideId");
                 debugPrint("DRIVER: Showing ride request: $rideId");
                 
@@ -394,9 +414,37 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const SizedBox(height: 16),
-
                   // Today's Earnings and Stats Gradient Card (dynamic blue gradient in driver mode)
+                  Container(
+                    margin: const EdgeInsets.only(bottom: 16),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.red.shade50.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.red.shade200, width: 1.5),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "🔧 DRIVER MODE FIRESTORE DEBUG PANEL",
+                          style: TextStyle(
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text("Firebase: ${FirebaseService.isFirebaseAvailable ? "Connected" : "Disconnected"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black85)),
+                        Text("Driver registered: ${_isOnline ? "Yes" : "No"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black85)),
+                        Text("Online: ${_isOnline ? "Yes" : "No"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black85)),
+                        Text("Available: ${_isOnline ? "Yes" : "No"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black85)),
+                        Text("Listening for rides: ${(_isOnline && FirebaseService.isFirebaseAvailable) ? "Yes" : "No"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black85)),
+                        Text("Active searching rides: ${_searchingRidesList.length}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black85)),
+                      ],
+                    ),
+                  ),
+
                   Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
