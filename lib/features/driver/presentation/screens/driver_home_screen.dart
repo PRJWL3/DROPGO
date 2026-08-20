@@ -67,7 +67,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
     _lastUpdateTime = null;
 
     if (val) {
-      debugPrint("DRIVER: Driver online: d_ramesh");
+      debugPrint("DRIVER ONLINE: d_ramesh");
       
       try {
         _fcmToken = await FirebaseService.getFcmToken().timeout(const Duration(seconds: 15));
@@ -85,6 +85,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
           isAvailable: true,
           token: _fcmToken ?? "mock_token",
         ).timeout(const Duration(seconds: 15));
+        debugPrint("DRIVER LOCATION: 12.9716, 77.5946");
       } catch (e) {
         debugPrint("Driver registration failed: $e");
         if (mounted) {
@@ -137,6 +138,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
               isAvailable: true,
               token: _fcmToken ?? "mock_token",
             ).timeout(const Duration(seconds: 15));
+            debugPrint("DRIVER LOCATION: ${position.latitude}, ${position.longitude}");
           } catch (e) {
             debugPrint("Throttled driver status update failed: $e");
           }

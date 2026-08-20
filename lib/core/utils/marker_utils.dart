@@ -70,4 +70,58 @@ class MarkerUtils {
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
     return BitmapDescriptor.fromBytes(data!.buffer.asUint8List());
   }
+
+  static Future<BitmapDescriptor> getBikeDriverMarker() async {
+    final ui.PictureRecorder pictureRecorder = ui.PictureRecorder();
+    final Canvas canvas = Canvas(pictureRecorder);
+    const double size = 80.0;
+    
+    // Draw shadow
+    final Paint shadowPaint = Paint()
+      ..color = Colors.black.withOpacity(0.2)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+    canvas.drawCircle(const Offset(size / 2, size / 2), size / 2.5, shadowPaint);
+
+    // Draw outer dark blue circular border
+    final Paint outerPaint = Paint()
+      ..color = const Color(0xFF1565FF) // Primary ride blue
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(const Offset(size / 2, size / 2), size / 2.7, outerPaint);
+
+    // Draw inner white circle
+    final Paint innerPaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+    canvas.drawCircle(const Offset(size / 2, size / 2), size / 3.4, innerPaint);
+
+    // Draw a small bike-like silhouette (e.g. two wheels and a connecting line)
+    final Paint linePaint = Paint()
+      ..color = const Color(0xFF1565FF)
+      ..strokeWidth = 3.5
+      ..style = PaintingStyle.stroke;
+    
+    // Wheels
+    final Paint wheelPaint = Paint()
+      ..color = const Color(0xFF1F2937) // Dark gray
+      ..style = PaintingStyle.fill;
+      
+    // Left wheel
+    canvas.drawCircle(const Offset(size * 0.38, size * 0.58), size / 14, wheelPaint);
+    // Right wheel
+    canvas.drawCircle(const Offset(size * 0.62, size * 0.58), size / 14, wheelPaint);
+
+    // Chassis / frame lines
+    final Path framePath = Path()
+      ..moveTo(size * 0.38, size * 0.58)
+      ..lineTo(size * 0.50, size * 0.45)
+      ..lineTo(size * 0.62, size * 0.58)
+      ..moveTo(size * 0.50, size * 0.45)
+      ..lineTo(size * 0.50, size * 0.35)
+      ..lineTo(size * 0.45, size * 0.35);
+    canvas.drawPath(framePath, linePaint);
+
+    final ui.Image image = await pictureRecorder.endRecording().toImage(size.toInt(), size.toInt());
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    return BitmapDescriptor.fromBytes(data!.buffer.asUint8List());
+  }
 }

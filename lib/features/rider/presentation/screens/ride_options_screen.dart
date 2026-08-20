@@ -14,6 +14,9 @@ import '../../../../core/utils/marker_utils.dart';
 import '../widgets/ride_option_card.dart';
 import '../../../../shared/widgets/primary_button.dart';
 import '../../../../core/providers/app_mode_provider.dart';
+import 'dart:async';
+import 'package:geolocator/geolocator.dart';
+import '../../providers/driver_location_provider.dart';
 import '../../../../core/services/directions_service.dart';
 
 class RideOptionsScreen extends ConsumerStatefulWidget {
@@ -29,7 +32,12 @@ class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
   GoogleMapController? _mapController;
   BitmapDescriptor? _pickupIcon;
   BitmapDescriptor? _destinationIcon;
+  BitmapDescriptor? _bikeDriverIcon;
   bool _isDisposed = false;
+
+  final Map<String, Marker> _driverMarkers = {};
+  final Map<String, LatLng> _driverPositions = {};
+  bool _hasFitInitialDrivers = false;
 
   @override
   void initState() {
@@ -40,6 +48,15 @@ class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
           _pickupIcon = icon;
         });
       }
+    });
+    MarkerUtils.getBikeDriverMarker().then((icon) {
+      if (mounted) {
+        setState(() {
+          _bikeDriverIcon = icon;
+        });
+      }
+    }).catchError((e) {
+      debugPrint("Failed to load custom bike icon: $e");
     });
     MarkerUtils.getDestinationMarker().then((icon) {
       if (mounted) {
@@ -82,6 +99,148 @@ class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
     await _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
   }
 
+  void _animateMarker(String driverId, LatLng from, LatLng to) {
+    const steps = 15;
+    const duration = Duration(milliseconds: 1000);
+    final delay = Duration(milliseconds: (duration.inMilliseconds / steps).round());
+    int currentStep = 0;
+
+    Timer.periodic(delay, (timer) {
+      if (_isDisposed || !mounted) {
+        timer.cancel();
+        return;
+      }
+      currentStep++;
+      final double fraction = currentStep / steps;
+      final double lat = from.latitude + (to.latitude - from.latitude) * fraction;
+      final double lng = from.longitude + (to.longitude - from.longitude) * fraction;
+
+      if (mounted) {
+        setState(() {
+          final oldMarker = _driverMarkers[driverId];
+          if (oldMarker != null) {
+            _driverMarkers[driverId] = oldMarker.copyWith(
+              positionParam: LatLng(lat, lng),
+            );
+          }
+        });
+      }
+
+      if (currentStep >= steps) {
+        timer.cancel();
+      }
+    });
+  }
+
+  void _syncDriverMarkers(List<Map<String, dynamic>> drivers) {
+    if (!mounted) return;
+
+    // Filter vehicleType to match "bike"
+    final eligibleDrivers = drivers.where((d) => d['vehicleType'] == 'bike').toList();
+
+    final currentIds = eligibleDrivers.map((d) => d['driverId'] as String).toSet();
+
+    // Remove offline/unavailable driver markers
+    final removedIds = _driverMarkers.keys.where((id) => !currentIds.contains(id)).toList();
+    for (var id in removedIds) {
+      _driverMarkers.remove(id);
+      _driverPositions.remove(id);
+      debugPrint("DRIVER REMOVED: $id");
+    }
+
+    final bookingState = ref.read(rideBookingNotifierProvider);
+    LatLng? pickupLatLng;
+    if (bookingState.pickup != null) {
+      pickupLatLng = LatLng(bookingState.pickup!.latitude, bookingState.pickup!.longitude);
+    }
+
+    for (var driver in eligibleDrivers) {
+      final driverId = driver['driverId'] as String;
+      final lat = (driver['currentLatitude'] as num).toDouble();
+      final lng = (driver['currentLongitude'] as num).toDouble();
+      final newLatLng = LatLng(lat, lng);
+
+      // Distance calculation
+      double distanceKm = 1.2;
+      if (pickupLatLng != null) {
+        final distanceMeters = Geolocator.distanceBetween(
+          pickupLatLng.latitude,
+          pickupLatLng.longitude,
+          lat,
+          lng,
+        );
+        distanceKm = distanceMeters / 1000.0;
+      }
+      final distanceStr = "${distanceKm.toStringAsFixed(1)} km";
+
+      if (!_driverMarkers.containsKey(driverId)) {
+        // Step 9: Reappear / Add driver
+        _driverMarkers[driverId] = Marker(
+          markerId: MarkerId(driverId),
+          position: newLatLng,
+          icon: _bikeDriverIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
+          infoWindow: InfoWindow(
+            title: "Vehicle: Bike",
+            snippet: "Approximate distance: $distanceStr • Available",
+          ),
+        );
+        _driverPositions[driverId] = newLatLng;
+        debugPrint("DRIVER ADDED: $driverId");
+      } else {
+        // Step 7: Animate movement locally
+        final oldLatLng = _driverPositions[driverId];
+        if (oldLatLng != null && (oldLatLng.latitude != lat || oldLatLng.longitude != lng)) {
+          _animateMarker(driverId, oldLatLng, newLatLng);
+          _driverPositions[driverId] = newLatLng;
+          debugPrint("DRIVER MOVED: $driverId");
+        }
+      }
+    }
+
+    // Step 10: Fit bounds ONLY once when initial driver markers are first loaded
+    if (!_hasFitInitialDrivers && eligibleDrivers.isNotEmpty && _mapController != null) {
+      _hasFitInitialDrivers = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _fitInitialCameraBounds(eligibleDrivers);
+      });
+    }
+
+    setState(() {});
+  }
+
+  void _fitInitialCameraBounds(List<Map<String, dynamic>> drivers) {
+    if (_mapController == null || drivers.isEmpty) return;
+
+    double minLat = 90.0, maxLat = -90.0;
+    double minLng = 180.0, maxLng = -180.0;
+
+    for (var driver in drivers) {
+      final lat = (driver['currentLatitude'] as num).toDouble();
+      final lng = (driver['currentLongitude'] as num).toDouble();
+      if (lat < minLat) minLat = lat;
+      if (lat > maxLat) maxLat = lat;
+      if (lng < minLng) minLng = lng;
+      if (lng > maxLng) maxLng = lng;
+    }
+
+    final bookingState = ref.read(rideBookingNotifierProvider);
+    if (bookingState.pickup != null) {
+      final pLat = bookingState.pickup!.latitude;
+      final pLng = bookingState.pickup!.longitude;
+      if (pLat < minLat) minLat = pLat;
+      if (pLat > maxLat) maxLat = pLat;
+      if (pLng < minLng) minLng = pLng;
+      if (pLng > maxLng) maxLng = pLng;
+    }
+
+    final bounds = LatLngBounds(
+      southwest: LatLng(minLat, minLng),
+      northeast: LatLng(maxLat, maxLng),
+    );
+
+    _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+  }
+
   @override
   Widget build(BuildContext context) {
     final bookingState = ref.watch(rideBookingNotifierProvider);
@@ -100,6 +259,12 @@ class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
     );
 
     final routeInfoAsync = ref.watch(routeInfoProvider(routeArg));
+
+    ref.listen<AsyncValue<List<Map<String, dynamic>>>>(onlineDriversProvider, (previous, next) {
+      next.whenData((drivers) {
+        _syncDriverMarkers(drivers);
+      });
+    });
 
     ref.listen<String?>(rideErrorProvider, (previous, next) {
       if (next != null && mounted) {
@@ -192,6 +357,7 @@ class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
               icon: _destinationIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
               infoWindow: InfoWindow(title: "Destination: ${bookingState.destination!.name}"),
             ),
+            ..._driverMarkers.values,
           },
           polylines: {
             Polyline(
