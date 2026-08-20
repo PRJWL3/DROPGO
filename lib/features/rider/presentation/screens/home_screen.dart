@@ -20,7 +20,7 @@ import '../../../../core/constants/map_style.dart';
 import '../../../../core/utils/marker_utils.dart';
 import '../../../../core/services/directions_service.dart';
 import '../../../../shared/widgets/primary_button.dart';
-import 'driver_home_screen.dart';
+import '../../../driver/presentation/screens/driver_home_screen.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});

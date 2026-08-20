@@ -184,6 +184,7 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
   }
 
   void confirmFare() async {
+    if (state.status == RiderStatus.searching) return;
     state = state.copyWith(status: RiderStatus.searching);
 
     final pickup = state.pickup;

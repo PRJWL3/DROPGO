@@ -15,6 +15,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import '../../../../core/services/firebase_service.dart';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 class DriverHomeScreen extends ConsumerStatefulWidget {
   const DriverHomeScreen({super.key});
 
@@ -30,30 +32,43 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
   StreamSubscription<Position>? _positionSubscription;
   StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
   StreamSubscription<RemoteMessage>? _fcmSubscription;
+  StreamSubscription? _firestoreRidesSubscription;
   Position? _lastUpdatedPosition;
   DateTime? _lastUpdateTime;
   String? _fcmToken;
+
+  final Set<String> _notifiedRideIds = {};
+  List<Map<String, dynamic>> _searchingRidesList = [];
 
   @override
   void dispose() {
     _positionSubscription?.cancel();
     _notificationSubscription?.cancel();
     _fcmSubscription?.cancel();
+    _firestoreRidesSubscription?.cancel();
     _mapController?.dispose();
     super.dispose();
   }
+
+
 
   void _toggleOnlineStatus(bool val) async {
     _positionSubscription?.cancel();
     _notificationSubscription?.cancel();
     _fcmSubscription?.cancel();
+    _firestoreRidesSubscription?.cancel();
+    
     _positionSubscription = null;
     _notificationSubscription = null;
     _fcmSubscription = null;
+    _firestoreRidesSubscription = null;
+    
     _lastUpdatedPosition = null;
     _lastUpdateTime = null;
 
     if (val) {
+      debugPrint("DRIVER: Driver online: d_ramesh");
+      
       final service = ref.read(locationServiceProvider);
       _fcmToken = await FirebaseService.getFcmToken();
 
@@ -99,20 +114,60 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
         }
       });
 
-      // Local simulator notification receiver
-      _notificationSubscription = FirebaseService.onLocalNotification.listen((payload) {
-        if (!mounted || !_isOnline) return;
-        final rideId = payload['rideId'] as String;
-        Navigator.pushNamed(context, '/incoming-request', arguments: rideId);
-      });
-
-      // Real FCM notification receiver
       if (FirebaseService.isFirebaseAvailable) {
-        _fcmSubscription = FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+        // Real Firestore Cross-device Synchronization
+        _firestoreRidesSubscription = FirebaseFirestore.instance
+            .collection('rides')
+            .where('status', isEqualTo: 'searching')
+            .where('vehicleType', isEqualTo: 'bike')
+            .snapshots()
+            .listen((snapshot) {
           if (!mounted || !_isOnline) return;
-          final rideId = message.data['rideId'] as String?;
-          if (rideId != null) {
+
+          final activeRides = snapshot.docs.where((doc) {
+            final data = doc.data();
+            final expiresTimestamp = data['expiresAt'] as Timestamp?;
+            if (expiresTimestamp == null) return false;
+            return expiresTimestamp.toDate().isAfter(DateTime.now());
+          }).toList();
+
+          debugPrint("DRIVER: Active searching rides: ${activeRides.length}");
+
+          for (var doc in activeRides) {
+            final rideId = doc.id;
+            if (!_notifiedRideIds.contains(rideId)) {
+              _notifiedRideIds.add(rideId);
+              debugPrint("DRIVER: New ride detected: $rideId");
+              debugPrint("DRIVER: Showing ride request: $rideId");
+
+              // Prompt incoming request overlay
+              Navigator.pushNamed(context, '/incoming-request', arguments: rideId);
+            }
+          }
+
+          if (mounted) {
+            setState(() {
+              _searchingRidesList = activeRides.map((doc) => doc.data()).toList();
+            });
+          }
+        });
+      } else {
+        // Fallback Local Simulation Mode
+        _notificationSubscription = FirebaseService.onLocalNotification.listen((payload) {
+          if (!mounted || !_isOnline) return;
+          final rideId = payload['rideId'] as String;
+
+          if (!_notifiedRideIds.contains(rideId)) {
+            _notifiedRideIds.add(rideId);
+            debugPrint("DRIVER: Active searching rides: 1");
+            debugPrint("DRIVER: New ride detected: $rideId");
+            debugPrint("DRIVER: Showing ride request: $rideId");
+
             Navigator.pushNamed(context, '/incoming-request', arguments: rideId);
+
+            setState(() {
+              _searchingRidesList = [payload];
+            });
           }
         });
       }
@@ -130,7 +185,115 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
         isAvailable: false,
         token: _fcmToken ?? "mock_token",
       );
+      
+      if (mounted) {
+        setState(() {
+          _searchingRidesList = [];
+        });
+      }
     }
+  }
+
+  Widget _buildRealRequestCard(String rideId, String pickup, double fare, AppModeColors activeColors) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: activeColors.elevatedCardBackground,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: activeColors.primary.withOpacity(0.2), width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                "RIDE REQUEST • Live",
+                style: TextStyle(
+                  color: activeColors.primary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 10,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: activeColors.isDark ? const Color(0xFF1E3A8A) : const Color(0xFFFEF3C7),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  "Est. ₹${fare.toStringAsFixed(0)}",
+                  style: TextStyle(
+                    color: activeColors.isDark ? Colors.white : const Color(0xFFD97706),
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Icon(Icons.location_on_rounded, color: activeColors.primary, size: 18),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  pickup,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: activeColors.textPrimary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () {
+                    setState(() {
+                      _searchingRidesList.removeWhere((r) => r['rideId'] == rideId);
+                    });
+                    context.showSnackBar("Request declined");
+                  },
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    side: BorderSide(color: activeColors.border),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: Text(
+                    "Decline",
+                    style: TextStyle(color: activeColors.textPrimary),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () {
+                    Navigator.pushNamed(context, '/incoming-request', arguments: rideId);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: activeColors.primary,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text("Accept", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -387,9 +550,51 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                   // Dynamic Request Card depending on online status
                   AnimatedSwitcher(
                     duration: const Duration(milliseconds: 350),
-                    child: _isOnline
-                        ? _buildIncomingRequestCard(activeColors)
-                        : _buildOfflineEmptyState(activeColors),
+                    child: !_isOnline
+                        ? _buildOfflineEmptyState(activeColors)
+                        : _searchingRidesList.isEmpty
+                            ? Container(
+                                key: const ValueKey("empty_online"),
+                                padding: const EdgeInsets.symmetric(vertical: 24),
+                                decoration: BoxDecoration(
+                                  color: activeColors.cardBackground,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: activeColors.border, width: 1.1),
+                                ),
+                                child: Center(
+                                  child: Column(
+                                    children: [
+                                      const CircularProgressIndicator(strokeWidth: 2.5),
+                                      const SizedBox(height: 12),
+                                      Text(
+                                        "Waiting for nearby requests...",
+                                        style: TextStyle(
+                                          color: activeColors.textSecondary,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              )
+                            : Column(
+                                key: const ValueKey("requests_online"),
+                                children: _searchingRidesList.map((ride) {
+                                  final rideId = ride['rideId'] as String? ?? '';
+                                  final pickup = ride['pickupAddress'] as String? ?? 'Pickup';
+                                  final fare = (ride['estimatedFare'] as num? ?? 68.0).toDouble();
+                                  return GestureDetector(
+                                    onTap: () {
+                                      Navigator.pushNamed(context, '/incoming-request', arguments: rideId);
+                                    },
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(bottom: 12.0),
+                                      child: _buildRealRequestCard(rideId, pickup, fare, activeColors),
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
                   ),
 
                   const SizedBox(height: 32),
@@ -496,104 +701,6 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildIncomingRequestCard(AppModeColors activeColors) {
-    return Container(
-      key: const ValueKey("online"),
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: activeColors.elevatedCardBackground,
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: activeColors.primary.withOpacity(0.2), width: 1.2),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                "RIDE REQUEST • 1.4 km away",
-                style: TextStyle(
-                  color: activeColors.primary,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 10,
-                  letterSpacing: 0.5,
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: activeColors.isDark ? const Color(0xFF1E3A8A) : const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  "Est. ₹120",
-                  style: TextStyle(
-                    color: activeColors.isDark ? Colors.white : const Color(0xFFD97706),
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Icon(Icons.location_on_rounded, color: activeColors.primary, size: 18),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  "Market Main Street, Bengaluru",
-                  style: TextStyle(
-                    color: activeColors.textPrimary,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () {
-                    context.showSnackBar("Request declined");
-                  },
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    side: BorderSide(color: activeColors.border),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: Text(
-                    "Decline",
-                    style: TextStyle(color: activeColors.textPrimary),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () {
-                    Navigator.pushNamed(context, '/incoming-request');
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: activeColors.primary,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  child: const Text("Accept", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ],
-          ),
-        ],
       ),
     );
   }

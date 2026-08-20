@@ -23,10 +23,10 @@ class _IncomingRideRequestScreenState extends ConsumerState<IncomingRideRequestS
   @override
   void initState() {
     super.initState();
-    // 15 seconds countdown timer
+    // 60 seconds countdown timer
     _timerController = AnimationController(
       vsync: this,
-      duration: const Duration(seconds: 15),
+      duration: const Duration(seconds: 60),
     );
 
     _timerController.addStatusListener((status) {
@@ -95,7 +95,7 @@ class _IncomingRideRequestScreenState extends ConsumerState<IncomingRideRequestS
       context.showSnackBar("Ride request accepted!", backgroundColor: Colors.green);
       Navigator.pushReplacementNamed(context, '/driver-to-pickup');
     } else {
-      context.showSnackBar("Failed: $error", backgroundColor: Colors.red);
+      context.showSnackBar(error, backgroundColor: Colors.red);
       Navigator.pop(context);
     }
   }

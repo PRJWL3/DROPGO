@@ -24,7 +24,7 @@ class FirebaseService {
       // Wrap initialization to prevent crashes on untargeted builds
       await Firebase.initializeApp();
       isFirebaseAvailable = true;
-      debugPrint("FIREBASE INITIALIZED SUCCESSFULLY IN REAL MODE");
+      debugPrint("FIREBASE MODE: Cross-device ride request enabled");
       
       // Request FCM permissions and configure background triggers
       final messaging = FirebaseMessaging.instance;
@@ -38,16 +38,16 @@ class FirebaseService {
       FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
     } catch (e) {
       isFirebaseAvailable = false;
-      debugPrint("--------------------------------------------------");
-      debugPrint("LOCAL SIMULATION MODE ACTIVATED (Firebase setup not found)");
+      debugPrint("LOCAL SIMULATION MODE");
       debugPrint("Error: $e");
-      debugPrint("--------------------------------------------------");
     }
   }
 
   @pragma('vm:entry-point')
   static Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-    await Firebase.initializeApp();
+    try {
+      await Firebase.initializeApp();
+    } catch (_) {}
     debugPrint("Handling background FCM push payload: ${message.data}");
   }
 
@@ -118,7 +118,7 @@ class FirebaseService {
     required double estimatedFare,
     required String paymentMethod,
   }) async {
-    final expiresAt = DateTime.now().add(const Duration(seconds: 15));
+    final expiresAt = DateTime.now().add(const Duration(seconds: 60));
     
     final data = {
       'rideId': rideId,
@@ -140,7 +140,7 @@ class FirebaseService {
       'expiresAt': isFirebaseAvailable ? Timestamp.fromDate(expiresAt) : expiresAt,
     };
 
-    debugPrint("Ride request created: $rideId");
+    debugPrint("RIDER: Ride created: $rideId");
 
     if (isFirebaseAvailable) {
       await FirebaseFirestore.instance.collection('rides').doc(rideId).set(data);
@@ -242,7 +242,7 @@ class FirebaseService {
         });
 
         if (result == null) {
-          debugPrint("Driver accepted: $driverId. Status: searching -> accepted");
+          debugPrint("DRIVER: Ride accepted: $rideId");
         }
         return result;
       } catch (e) {
@@ -291,7 +291,7 @@ class FirebaseService {
       _localRides[rideId] = rideData;
       _getOrCreateRideController(rideId).add(rideData);
 
-      debugPrint("LOCAL SIMULATION MODE: Driver accepted: $driverId. Status: searching -> accepted");
+      debugPrint("DRIVER: Ride accepted: $rideId");
       return null; // Success
     }
   }
