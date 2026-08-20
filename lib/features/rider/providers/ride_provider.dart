@@ -11,6 +11,7 @@ import '../../../services/fake_location_service.dart';
 import '../../../services/fake_tracking_service.dart';
 import '../../../core/services/firebase_service.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class RideBookingState {
   final RiderStatus status;
@@ -309,6 +310,118 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
       }
     } catch (e) {
       debugPrint("Verification readback failed: $e");
+    }
+
+    // Step 7: Check Local Simulation vs Firebase Mode
+    final String laptopProjectId = FirebaseService.isFirebaseAvailable
+        ? Firebase.app().options.projectId
+        : "LOCAL_SIMULATION";
+
+    if (FirebaseService.isFirebaseAvailable) {
+      debugPrint("FIREBASE MODE ACTIVE");
+    } else {
+      debugPrint("LOCAL SIMULATION MODE ACTIVE");
+    }
+
+    if (FirebaseService.isFirebaseAvailable) {
+      // STEP 1 — READ ALL DRIVER DOCUMENTS FROM RIDER
+      debugPrint("========== RIDER DRIVER DATABASE CHECK ==========");
+      debugPrint("Firebase initialized: ${FirebaseService.isFirebaseAvailable}");
+      debugPrint("Firebase project ID: $laptopProjectId");
+
+      try {
+        final allDriversSnapshot = await FirebaseFirestore.instance
+            .collection('drivers')
+            .get()
+            .timeout(const Duration(seconds: 15));
+        debugPrint("Total driver documents: ${allDriversSnapshot.docs.length}");
+        for (var doc in allDriversSnapshot.docs) {
+          final data = doc.data();
+          debugPrint("driverId: ${doc.id}");
+          debugPrint("isOnline: ${data['isOnline']} (${data['isOnline']?.runtimeType})");
+          debugPrint("isAvailable: ${data['isAvailable']} (${data['isAvailable']?.runtimeType})");
+          debugPrint("vehicleType: ${data['vehicleType']} (${data['vehicleType']?.runtimeType})");
+          debugPrint("latitude: ${data['currentLatitude']} (${data['currentLatitude']?.runtimeType})");
+          debugPrint("longitude: ${data['currentLongitude']} (${data['currentLongitude']?.runtimeType})");
+        }
+      } catch (e) {
+        debugPrint("STEP 1: Direct read of /drivers failed with exception:");
+        debugPrint("$e");
+        if (e is FirebaseException) {
+          debugPrint("Error Code: ${e.code}");
+        }
+      }
+
+      // STEP 2 — READ THE SPECIFIC DRIVER
+      debugPrint("========== SPECIFIC DRIVER CHECK ==========");
+      String? driverProjectId;
+      try {
+        final specificDriverSnapshot = await FirebaseFirestore.instance
+            .collection('drivers')
+            .doc('d_ramesh')
+            .get()
+            .timeout(const Duration(seconds: 15));
+        
+        final docExists = specificDriverSnapshot.exists;
+        debugPrint("Document exists: $docExists");
+        if (docExists) {
+          final data = specificDriverSnapshot.data()!;
+          debugPrint("driverId: d_ramesh");
+          debugPrint("isOnline: ${data['isOnline']} (${data['isOnline']?.runtimeType})");
+          debugPrint("isAvailable: ${data['isAvailable']} (${data['isAvailable']?.runtimeType})");
+          debugPrint("vehicleType: ${data['vehicleType']} (${data['vehicleType']?.runtimeType})");
+          debugPrint("currentLatitude: ${data['currentLatitude']} (${data['currentLatitude']?.runtimeType})");
+          debugPrint("currentLongitude: ${data['currentLongitude']} (${data['currentLongitude']?.runtimeType})");
+          
+          driverProjectId = data['projectId'] as String?;
+        }
+      } catch (e) {
+        debugPrint("STEP 2: Direct read of /drivers/d_ramesh failed with exception:");
+        debugPrint("$e");
+        if (e is FirebaseException) {
+          debugPrint("Error Code: ${e.code}");
+        }
+      }
+
+      // STEP 3 — COMPARE FIREBASE PROJECTS
+      debugPrint("========== FIREBASE PROJECT COMPARISON ==========");
+      debugPrint("ANDROID: Firebase project ID: ${driverProjectId ?? 'Unknown (not written/read yet)'}");
+      debugPrint("LAPTOP: Firebase project ID: $laptopProjectId");
+      if (driverProjectId != null && driverProjectId != laptopProjectId) {
+        debugPrint("CRITICAL: ANDROID AND RIDER ARE USING DIFFERENT FIREBASE PROJECTS");
+        _ref.read(rideErrorProvider.notifier).state = "ANDROID AND RIDER ARE USING DIFFERENT FIREBASE PROJECTS";
+        state = state.copyWith(status: RiderStatus.noDriversAvailable);
+        return; // STOP execution
+      } else if (driverProjectId != null) {
+        debugPrint("Firebase project ID comparison MATCHED: $laptopProjectId");
+      }
+
+      // STEP 4 — TEST THE QUERY & STEP 5 — CHECK FIELD TYPES
+      debugPrint("========== DRIVER QUERY RESULT ==========");
+      try {
+        final querySnapshot = await FirebaseFirestore.instance
+            .collection('drivers')
+            .where('isOnline', isEqualTo: true)
+            .where('isAvailable', isEqualTo: true)
+            .where('vehicleType', isEqualTo: 'bike')
+            .get()
+            .timeout(const Duration(seconds: 15));
+        
+        debugPrint("Query returned: ${querySnapshot.docs.length}");
+        for (var doc in querySnapshot.docs) {
+          final data = doc.data();
+          debugPrint("driverId: ${doc.id}");
+          debugPrint("isOnline: ${data['isOnline']} (${data['isOnline']?.runtimeType})");
+          debugPrint("isAvailable: ${data['isAvailable']} (${data['isAvailable']?.runtimeType})");
+          debugPrint("vehicleType: ${data['vehicleType']} (${data['vehicleType']?.runtimeType})");
+        }
+      } catch (e) {
+        debugPrint("STEP 4: Query execution failed with exception:");
+        debugPrint("$e");
+        if (e is FirebaseException) {
+          debugPrint("Error Code: ${e.code}");
+        }
+      }
     }
 
     // 8. DRIVER QUERY

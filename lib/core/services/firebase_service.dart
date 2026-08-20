@@ -143,6 +143,7 @@ class FirebaseService {
       'currentLatitude': lat,
       'currentLongitude': lng,
       'fcmToken': token,
+      'projectId': isFirebaseAvailable ? Firebase.app().options.projectId : "local",
       'updatedAt': isFirebaseAvailable ? FieldValue.serverTimestamp() : DateTime.now(),
     };
 
