@@ -32,22 +32,44 @@ class FirebaseService {
       debugPrint("FIREBASE INITIALIZED");
       debugPrint("FIREBASE MODE");
       debugPrint("Firebase Project ID: $projectId");
+
+      if (kIsWeb) {
+        debugPrint("========== WEB FIREBASE DEBUG ==========");
+        debugPrint("Firebase initialized:\ntrue\n");
+        debugPrint("Firebase project ID:\n$projectId\n");
+        debugPrint("Firestore instance:\navailable");
+      }
       
-      // Run Firestore Diagnostic Test
-      runFirestoreDiagnostic("diag_${DateTime.now().millisecondsSinceEpoch}");
+      // Run Firestore Diagnostic Test (non-fatal)
+      try {
+        await runFirestoreDiagnostic("diag_${DateTime.now().millisecondsSinceEpoch}");
+      } catch (diagError) {
+        debugPrint("Firestore diagnostic test warning: $diagError");
+      }
 
-      final messaging = FirebaseMessaging.instance;
-      await messaging.requestPermission(
-        alert: true,
-        badge: true,
-        provisional: false,
-        sound: true,
-      );
+      // Safeguard Firebase Messaging (non-fatal, especially on web/desktop)
+      try {
+        final messaging = FirebaseMessaging.instance;
+        await messaging.requestPermission(
+          alert: true,
+          badge: true,
+          provisional: false,
+          sound: true,
+        );
 
-      FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+        FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+      } catch (msgError) {
+        debugPrint("Firebase Messaging initialization warning (non-fatal): $msgError");
+      }
     } catch (e) {
       isFirebaseAvailable = false;
       debugPrint("FIREBASE INITIALIZATION FAILED. Error: $e");
+      if (kIsWeb) {
+        debugPrint("========== WEB FIREBASE DEBUG ==========");
+        debugPrint("Firebase initialized:\nfalse\n");
+        debugPrint("Firebase project ID:\nUnknown\n");
+        debugPrint("Firestore instance:\nunavailable");
+      }
       debugPrint("LOCAL SIMULATION MODE");
     }
   }
@@ -158,13 +180,13 @@ class FirebaseService {
         final snapshot = await docRef.get().timeout(const Duration(seconds: 15));
         final exists = snapshot.exists;
         
-        debugPrint("Driver ID: $driverId");
-        debugPrint("Driver Firestore path: ${docRef.path}");
-        debugPrint("Driver online: $isOnline");
-        debugPrint("Driver available: $isAvailable");
-        debugPrint("Driver vehicle type: bike");
-        debugPrint("Driver location: ($lat, $lng)");
-        debugPrint("Driver document successfully written: $exists");
+        debugPrint("Driver document exists:\n$exists\n");
+        if (exists) {
+          final readData = snapshot.data();
+          debugPrint("isOnline:\n${readData?['isOnline']}\n");
+          debugPrint("isAvailable:\n${readData?['isAvailable']}\n");
+          debugPrint("vehicleType:\n${readData?['vehicleType']}");
+        }
         
         if (!exists) {
           throw Exception("Document readback returned empty/non-existent");

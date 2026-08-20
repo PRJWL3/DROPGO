@@ -151,10 +151,19 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
 
       if (FirebaseService.isFirebaseAvailable) {
         try {
+          if (kIsWeb) {
+            debugPrint("========== WEB RIDE LISTENER ==========");
+            debugPrint("Attempting to start listener...");
+          }
+
           final query = FirebaseFirestore.instance
               .collection('rides')
               .where('status', isEqualTo: 'searching')
               .where('vehicleType', isEqualTo: 'bike');
+
+          // Log project ID for Step 9
+          final String driverProjectId = Firebase.app().options.projectId;
+          debugPrint("DRIVER: Firebase project ID: $driverProjectId");
 
           // Step 7: Initial fetch of currently active requests
           final initialSnapshot = await query.get().timeout(const Duration(seconds: 15));
@@ -164,6 +173,18 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
             if (expiresTimestamp == null) return false;
             return expiresTimestamp.toDate().isAfter(DateTime.now());
           }).toList();
+
+          if (kIsWeb) {
+            debugPrint("Ride snapshot received");
+            debugPrint("Total documents:\n${existingRides.length}\n");
+            for (var doc in existingRides) {
+              final data = doc.data();
+              debugPrint("rideId: ${doc.id}");
+              debugPrint("status: ${data['status']}");
+              debugPrint("vehicleType: ${data['vehicleType']}");
+              debugPrint("expiresAt: ${data['expiresAt']}");
+            }
+          }
 
           debugPrint("Searching rides received: ${existingRides.length}");
 
@@ -204,6 +225,18 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
               return expiresTimestamp.toDate().isAfter(DateTime.now());
             }).toList();
 
+            if (kIsWeb) {
+              debugPrint("Ride snapshot received");
+              debugPrint("Total documents:\n${activeRides.length}\n");
+              for (var doc in activeRides) {
+                final data = doc.data();
+                debugPrint("rideId: ${doc.id}");
+                debugPrint("status: ${data['status']}");
+                debugPrint("vehicleType: ${data['vehicleType']}");
+                debugPrint("expiresAt: ${data['expiresAt']}");
+              }
+            }
+
             debugPrint("Searching rides received: ${activeRides.length}");
 
             for (var doc in activeRides) {
@@ -231,11 +264,21 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                 _searchingRidesList = activeRides.map((doc) => doc.data()).toList();
               });
             }
+          }, onError: (e) {
+            debugPrint("Listener failed:\n$e\n");
+            if (e is FirebaseException) {
+              debugPrint("Error code:\n${e.code}\n");
+            }
           });
+
+          if (kIsWeb) {
+            debugPrint("Listener started successfully");
+            debugPrint("Listening for rides: YES");
+          }
         } catch (e) {
-          debugPrint("Error loading Firestore active requests: $e");
-          if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
-            debugPrint("PERMISSION-DENIED: Failed during rides subscription setup. Error: $e");
+          debugPrint("Listener failed:\n$e\n");
+          if (e is FirebaseException) {
+            debugPrint("Error code:\n${e.code}\n");
           }
         }
       } else {
@@ -435,11 +478,11 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                           ),
                         ),
                         const SizedBox(height: 8),
-                        Text("Firebase: ${FirebaseService.isFirebaseAvailable ? "Connected" : "Disconnected"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
-                        Text("Driver registered: ${_isOnline ? "Yes" : "No"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
-                        Text("Online: ${_isOnline ? "Yes" : "No"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
-                        Text("Available: ${_isOnline ? "Yes" : "No"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
-                        Text("Listening for rides: ${(_isOnline && FirebaseService.isFirebaseAvailable) ? "Yes" : "No"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
+                        Text("Firebase initialized: ${FirebaseService.isFirebaseAvailable ? "YES" : "NO"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
+                        Text("Firestore write: ${_isOnline ? "SUCCESS" : "INACTIVE"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
+                        Text("Driver registered: ${_isOnline ? "YES" : "NO"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
+                        Text("Ride listener: ${_firestoreRidesSubscription != null ? "ACTIVE" : "INACTIVE"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
+                        Text("Listening for rides: ${(_isOnline && _firestoreRidesSubscription != null) ? "YES" : "NO"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
                         Text("Active searching rides: ${_searchingRidesList.length}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
                       ],
                     ),

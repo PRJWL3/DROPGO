@@ -385,11 +385,11 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
 
       // STEP 3 — COMPARE FIREBASE PROJECTS
       debugPrint("========== FIREBASE PROJECT COMPARISON ==========");
-      debugPrint("ANDROID: Firebase project ID: ${driverProjectId ?? 'Unknown (not written/read yet)'}");
-      debugPrint("LAPTOP: Firebase project ID: $laptopProjectId");
+      debugPrint("DRIVER: Firebase project ID: ${driverProjectId ?? 'Unknown (not written/read yet)'}");
+      debugPrint("RIDER: Firebase project ID: $laptopProjectId");
       if (driverProjectId != null && driverProjectId != laptopProjectId) {
-        debugPrint("CRITICAL: ANDROID AND RIDER ARE USING DIFFERENT FIREBASE PROJECTS");
-        _ref.read(rideErrorProvider.notifier).state = "ANDROID AND RIDER ARE USING DIFFERENT FIREBASE PROJECTS";
+        debugPrint("CRITICAL: RIDER AND DRIVER WEB CLIENTS ARE USING DIFFERENT FIREBASE PROJECTS");
+        _ref.read(rideErrorProvider.notifier).state = "RIDER AND DRIVER WEB CLIENTS ARE USING DIFFERENT FIREBASE PROJECTS";
         state = state.copyWith(status: RiderStatus.noDriversAvailable);
         return; // STOP execution
       } else if (driverProjectId != null) {
