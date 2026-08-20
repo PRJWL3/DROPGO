@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import '../../features/rider/models/ride_model.dart';
+import '../../../firebase_options.dart';
 
 class FirebaseService {
   static bool isFirebaseAvailable = false;
@@ -22,7 +23,9 @@ class FirebaseService {
   /// Initializes Firebase Core and Cloud Messaging safely
   static Future<void> initialize() async {
     try {
-      await Firebase.initializeApp();
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
       isFirebaseAvailable = true;
       initializationError = null;
       
@@ -80,7 +83,9 @@ class FirebaseService {
   @pragma('vm:entry-point')
   static Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
     try {
-      await Firebase.initializeApp();
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
     } catch (_) {}
     debugPrint("Handling background FCM push payload: ${message.data}");
   }
@@ -91,6 +96,20 @@ class FirebaseService {
       debugPrint("Diagnostic skipped: Firebase not initialized.");
       return;
     }
+    
+    String platform = 'unknown';
+    if (kIsWeb) {
+      platform = 'web';
+    } else {
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        platform = 'android';
+      } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+        platform = 'ios';
+      } else {
+        platform = defaultTargetPlatform.toString().split('.').last.toLowerCase();
+      }
+    }
+
     final ref = FirebaseFirestore.instance.collection('connection_test').doc(deviceId);
     
     // Test Write
@@ -101,46 +120,39 @@ class FirebaseService {
         'timestamp': FieldValue.serverTimestamp(),
       }).timeout(const Duration(seconds: 15));
       writeSuccess = true;
-      debugPrint("Firestore write: SUCCESS");
     } catch (e) {
-      if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
-        debugPrint("PERMISSION-DENIED: Failed during diagnostic write. Error: $e");
-      } else {
-        debugPrint("Firestore write: FAILED. Error: $e");
-      }
+      debugPrint("Firestore write failed during test: $e");
     }
 
     // Test Read
+    bool readSuccess = false;
     if (writeSuccess) {
       try {
         final doc = await ref.get().timeout(const Duration(seconds: 15));
         if (doc.exists && doc.data()?['test'] == 'success') {
-          debugPrint("Firestore read: SUCCESS");
-        } else {
-          debugPrint("Firestore read: FAILED (document empty or missing)");
+          readSuccess = true;
         }
       } catch (e) {
-        if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
-          debugPrint("PERMISSION-DENIED: Failed during diagnostic read. Error: $e");
-        } else {
-          debugPrint("Firestore read: FAILED. Error: $e");
-        }
+        debugPrint("Firestore read failed during test: $e");
       }
-    } else {
-      debugPrint("Firestore read: FAILED (skipped write)");
     }
 
     // Test Delete
+    bool deleteSuccess = false;
     try {
       await ref.delete().timeout(const Duration(seconds: 15));
-      debugPrint("Firestore delete: SUCCESS");
+      deleteSuccess = true;
     } catch (e) {
-      if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
-        debugPrint("PERMISSION-DENIED: Failed during diagnostic delete. Error: $e");
-      } else {
-        debugPrint("Firestore delete: FAILED. Error: $e");
-      }
+      debugPrint("Firestore delete failed during test: $e");
     }
+
+    debugPrint("========== FIREBASE CONNECTION TEST ==========");
+    debugPrint("Platform: $platform");
+    debugPrint("Firebase initialized: YES");
+    debugPrint("Project ID: dropgo-fa413");
+    debugPrint("Firestore write: ${writeSuccess ? 'SUCCESS' : 'FAILED'}");
+    debugPrint("Firestore read: ${readSuccess ? 'SUCCESS' : 'FAILED'}");
+    debugPrint("Firestore delete: ${deleteSuccess ? 'SUCCESS' : 'FAILED'}");
   }
 
   /// Registers or updates driver status in Firestore or local memory
@@ -298,7 +310,16 @@ class FirebaseService {
     if (isFirebaseAvailable) {
       try {
         await FirebaseFirestore.instance.collection('rides').doc(rideId).set(data).timeout(const Duration(seconds: 15));
-        debugPrint("Ride created: $rideId");
+        
+        final snapshot = await FirebaseFirestore.instance.collection('rides').doc(rideId).get().timeout(const Duration(seconds: 15));
+        final exists = snapshot.exists;
+        debugPrint("Ride document written & verified read: $exists");
+        if (exists) {
+          final readData = snapshot.data();
+          debugPrint("Ride ID: ${readData?['rideId']}");
+          debugPrint("Rider Name: ${readData?['riderName']}");
+          debugPrint("Status: ${readData?['status']}");
+        }
       } catch (e) {
         if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
           debugPrint("PERMISSION-DENIED: Failed during createRideRequest write. Error: $e");
