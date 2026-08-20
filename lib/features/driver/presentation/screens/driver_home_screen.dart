@@ -481,6 +481,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                         ),
                         const SizedBox(height: 8),
                         Text("Firebase initialized: ${FirebaseService.isFirebaseAvailable ? "YES" : "NO"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
+                        Text("Firebase error: ${FirebaseService.initializationError ?? "None"}", style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.redAccent)),
                         Text("Firestore write: ${_isOnline ? "SUCCESS" : "INACTIVE"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
                         Text("Driver registered: ${_isOnline ? "YES" : "NO"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
                         Text("Ride listener: ${_firestoreRidesSubscription != null ? "ACTIVE" : "INACTIVE"}", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),

@@ -7,6 +7,7 @@ import '../../features/rider/models/ride_model.dart';
 
 class FirebaseService {
   static bool isFirebaseAvailable = false;
+  static String? initializationError;
 
   // Local simulated database maps for Local Mode fallback
   static final Map<String, Map<String, dynamic>> _localDrivers = {};
@@ -23,6 +24,7 @@ class FirebaseService {
     try {
       await Firebase.initializeApp();
       isFirebaseAvailable = true;
+      initializationError = null;
       
       String projectId = "Unknown";
       try {
@@ -63,6 +65,7 @@ class FirebaseService {
       }
     } catch (e) {
       isFirebaseAvailable = false;
+      initializationError = e.toString();
       debugPrint("FIREBASE INITIALIZATION FAILED. Error: $e");
       if (kIsWeb) {
         debugPrint("========== WEB FIREBASE DEBUG ==========");
