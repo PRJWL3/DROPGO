@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/providers/app_mode_provider.dart';
+import '../../../../core/services/firebase_service.dart';
+import '../../../../core/utils/extensions.dart';
 import '../../../rider/presentation/widgets/map_preview.dart';
 
 class IncomingRideRequestScreen extends ConsumerStatefulWidget {
@@ -14,6 +16,9 @@ class IncomingRideRequestScreen extends ConsumerStatefulWidget {
 class _IncomingRideRequestScreenState extends ConsumerState<IncomingRideRequestScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _timerController;
+  String? _rideId;
+  Map<String, dynamic>? _rideData;
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -28,12 +33,71 @@ class _IncomingRideRequestScreenState extends ConsumerState<IncomingRideRequestS
       if (status == AnimationStatus.completed) {
         // Auto-dismiss when countdown ends
         if (mounted) {
+          context.showSnackBar("Ride request expired");
           Navigator.pop(context);
         }
       }
     });
 
     _timerController.forward();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_rideId == null) {
+      final args = ModalRoute.of(context)!.settings.arguments;
+      if (args is String) {
+        _rideId = args;
+        _loadRideDetails();
+      } else {
+        // Fallback for mock preview
+        _rideId = "mock_ride_id";
+        _loadRideDetails();
+      }
+    }
+  }
+
+  void _loadRideDetails() async {
+    if (_rideId == null) return;
+    final data = await FirebaseService.getRide(_rideId!);
+    if (mounted) {
+      setState(() {
+        _rideData = data;
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _acceptRide() async {
+    if (_rideId == null) return;
+
+    _timerController.stop();
+
+    setState(() {
+      _isLoading = true;
+    });
+
+    final error = await FirebaseService.acceptRide(
+      rideId: _rideId!,
+      driverId: "d_ramesh",
+      driverName: "Ramesh Kumar",
+      driverVehicleNumber: "KA-05-AA-5678",
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = false;
+    });
+
+    if (error == null) {
+      context.showSnackBar("Ride request accepted!", backgroundColor: Colors.green);
+      Navigator.pushReplacementNamed(context, '/driver-to-pickup');
+    } else {
+      context.showSnackBar("Failed: $error", backgroundColor: Colors.red);
+      Navigator.pop(context);
+    }
   }
 
   @override
@@ -45,6 +109,26 @@ class _IncomingRideRequestScreenState extends ConsumerState<IncomingRideRequestS
   @override
   Widget build(BuildContext context) {
     final activeColors = ref.watch(appModeColorsProvider);
+
+    if (_isLoading) {
+      return Scaffold(
+        backgroundColor: activeColors.background,
+        body: const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
+    final hasData = _rideData != null;
+    final riderName = _rideData?['riderName'] as String? ?? "Passenger";
+    final pickup = _rideData?['pickupAddress'] as String? ?? "Pickup Address";
+    final dest = _rideData?['destinationAddress'] as String? ?? "Destination Address";
+    final distance = _rideData?['distanceKm'] as double? ?? 1.2;
+    final duration = _rideData?['estimatedDurationMinutes'] as double? ?? 14.0;
+    final fare = _rideData?['estimatedFare'] as double? ?? 68.0;
+
+    // Driver gets 85% of fare as estimated earnings
+    final earnings = fare * 0.85;
 
     return Scaffold(
       body: Stack(
@@ -111,7 +195,7 @@ class _IncomingRideRequestScreenState extends ConsumerState<IncomingRideRequestS
                             animation: _timerController,
                             builder: (context, child) {
                               return CircularProgressIndicator(
-                                value: 1.0 - _timerController.value, // countdown down
+                                value: 1.0 - _timerController.value,
                                 strokeWidth: 5,
                                 backgroundColor: activeColors.border,
                                 valueColor: AlwaysStoppedAnimation<Color>(activeColors.primary),
@@ -134,7 +218,7 @@ class _IncomingRideRequestScreenState extends ConsumerState<IncomingRideRequestS
                   // Rider Name and Rating
                   Center(
                     child: Text(
-                      "Priya",
+                      riderName,
                       style: TextStyle(
                         color: activeColors.textPrimary,
                         fontWeight: FontWeight.bold,
@@ -172,16 +256,16 @@ class _IncomingRideRequestScreenState extends ConsumerState<IncomingRideRequestS
                     child: Column(
                       children: [
                         _buildRouteRow(
-                          iconColor: const Color(0xFF10B981), // success green dot
+                          iconColor: const Color(0xFF10B981),
                           title: "Pickup",
-                          address: "Ramapuram Market",
+                          address: pickup,
                           activeColors: activeColors,
                         ),
                         Divider(height: 20, thickness: 1.0, color: activeColors.border),
                         _buildRouteRow(
                           iconColor: activeColors.primary,
                           title: "Destination",
-                          address: "Anantapur Bus Stand",
+                          address: dest,
                           activeColors: activeColors,
                         ),
                       ],
@@ -194,9 +278,9 @@ class _IncomingRideRequestScreenState extends ConsumerState<IncomingRideRequestS
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceAround,
                     children: [
-                      _buildSpecItem("Distance", "1.2 km", activeColors),
-                      _buildSpecItem("Est. Fare", "₹68", activeColors),
-                      _buildSpecItem("Trip Time", "14 min", activeColors),
+                      _buildSpecItem("Distance", "${distance.toStringAsFixed(1)} km", activeColors),
+                      _buildSpecItem("Earnings", "₹${earnings.toStringAsFixed(0)}", activeColors),
+                      _buildSpecItem("Trip Time", "${duration.toStringAsFixed(0)} min", activeColors),
                     ],
                   ),
 
@@ -233,10 +317,7 @@ class _IncomingRideRequestScreenState extends ConsumerState<IncomingRideRequestS
                       // Accept Solid Button
                       Expanded(
                         child: ElevatedButton(
-                          onPressed: () {
-                            _timerController.stop();
-                            Navigator.pushNamed(context, '/driver-to-pickup');
-                          },
+                          onPressed: _acceptRide,
                           style: ElevatedButton.styleFrom(
                             backgroundColor: activeColors.primary,
                             padding: const EdgeInsets.symmetric(vertical: 14),

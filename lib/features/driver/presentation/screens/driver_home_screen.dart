@@ -10,6 +10,11 @@ import '../../../rider/presentation/widgets/app_top_bar.dart';
 import '../../../rider/presentation/widgets/bottom_nav_bar.dart';
 import '../../../rider/presentation/widgets/map_preview.dart';
 
+import 'dart:async';
+import 'package:geolocator/geolocator.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import '../../../../core/services/firebase_service.dart';
+
 class DriverHomeScreen extends ConsumerStatefulWidget {
   const DriverHomeScreen({super.key});
 
@@ -22,10 +27,110 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
   int _currentNavIndex = 0;
   GoogleMapController? _mapController;
 
+  StreamSubscription<Position>? _positionSubscription;
+  StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
+  StreamSubscription<RemoteMessage>? _fcmSubscription;
+  Position? _lastUpdatedPosition;
+  DateTime? _lastUpdateTime;
+  String? _fcmToken;
+
   @override
   void dispose() {
+    _positionSubscription?.cancel();
+    _notificationSubscription?.cancel();
+    _fcmSubscription?.cancel();
     _mapController?.dispose();
     super.dispose();
+  }
+
+  void _toggleOnlineStatus(bool val) async {
+    _positionSubscription?.cancel();
+    _notificationSubscription?.cancel();
+    _fcmSubscription?.cancel();
+    _positionSubscription = null;
+    _notificationSubscription = null;
+    _fcmSubscription = null;
+    _lastUpdatedPosition = null;
+    _lastUpdateTime = null;
+
+    if (val) {
+      final service = ref.read(locationServiceProvider);
+      _fcmToken = await FirebaseService.getFcmToken();
+
+      // Listen for GPS updates (throttled every 10 seconds or 50 meters)
+      _positionSubscription = service.getPositionStream().listen((position) {
+        if (!mounted || !_isOnline) return;
+
+        bool shouldUpdate = false;
+        final now = DateTime.now();
+
+        if (_lastUpdatedPosition == null || _lastUpdateTime == null) {
+          shouldUpdate = true;
+        } else {
+          final elapsedSec = now.difference(_lastUpdateTime!).inSeconds;
+          final distanceMoved = Geolocator.distanceBetween(
+            _lastUpdatedPosition!.latitude,
+            _lastUpdatedPosition!.longitude,
+            position.latitude,
+            position.longitude,
+          );
+
+          if (elapsedSec >= 10 || distanceMoved >= 50) {
+            shouldUpdate = true;
+          }
+        }
+
+        if (shouldUpdate) {
+          _lastUpdatedPosition = position;
+          _lastUpdateTime = now;
+
+          FirebaseService.updateDriverStatus(
+            driverId: "d_ramesh",
+            name: "Ramesh Kumar",
+            phone: "+91 98765 43210",
+            vehicleNumber: "KA-05-AA-5678",
+            rating: 4.8,
+            lat: position.latitude,
+            lng: position.longitude,
+            isOnline: true,
+            isAvailable: true,
+            token: _fcmToken ?? "mock_token",
+          );
+        }
+      });
+
+      // Local simulator notification receiver
+      _notificationSubscription = FirebaseService.onLocalNotification.listen((payload) {
+        if (!mounted || !_isOnline) return;
+        final rideId = payload['rideId'] as String;
+        Navigator.pushNamed(context, '/incoming-request', arguments: rideId);
+      });
+
+      // Real FCM notification receiver
+      if (FirebaseService.isFirebaseAvailable) {
+        _fcmSubscription = FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+          if (!mounted || !_isOnline) return;
+          final rideId = message.data['rideId'] as String?;
+          if (rideId != null) {
+            Navigator.pushNamed(context, '/incoming-request', arguments: rideId);
+          }
+        });
+      }
+    } else {
+      // Driver going offline: update online status to false and stop location stream
+      FirebaseService.updateDriverStatus(
+        driverId: "d_ramesh",
+        name: "Ramesh Kumar",
+        phone: "+91 98765 43210",
+        vehicleNumber: "KA-05-AA-5678",
+        rating: 4.8,
+        lat: _lastUpdatedPosition?.latitude ?? 12.9716,
+        lng: _lastUpdatedPosition?.longitude ?? 77.5946,
+        isOnline: false,
+        isAvailable: false,
+        token: _fcmToken ?? "mock_token",
+      );
+    }
   }
 
   @override
@@ -152,6 +257,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                             setState(() {
                               _isOnline = val;
                             });
+                            _toggleOnlineStatus(val);
                             context.showSnackBar(
                               _isOnline ? "You are now ONLINE" : "You are now OFFLINE",
                               backgroundColor: _isOnline ? const Color(0xFF10B981) : activeColors.textSecondary,

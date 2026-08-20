@@ -24,7 +24,7 @@ class RideOptionsScreen extends ConsumerStatefulWidget {
 }
 
 class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
-  String _selectedClass = "Mini";
+  String _selectedClass = "Bike";
   double? _lastEstimatedFare;
   GoogleMapController? _mapController;
   BitmapDescriptor? _pickupIcon;
@@ -325,10 +325,18 @@ class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
                         ),
                         const SizedBox(height: 16),
 
-                        // Ride options choices (Mini, Sedan, SUV, Prime)
-                        ...List.generate(4, (index) {
+                        // Ride options choices (Bike, Mini, Sedan, SUV, Prime)
+                        ...List.generate(5, (index) {
                           final double baseEst = _lastEstimatedFare ?? 120.0;
                           final List<Map<String, dynamic>> classes = [
+                            {
+                              "title": "Bike",
+                              "capacity": 1,
+                              "duration": "1 min",
+                              "price": "₹${(baseEst * 0.55).toStringAsFixed(0)}",
+                              "isEco": true,
+                              "type": "bike",
+                            },
                             {
                               "title": "Mini",
                               "capacity": 4,
@@ -465,8 +473,9 @@ class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
                           child: Column(
                             children: [
                               PrimaryButton(
-                                text: "Confirm Ride",
+                                text: _selectedClass == "Bike" ? "Book Bike" : "Confirm Ride",
                                 onPressed: () {
+                                  bookingNotifier.selectDriverClass(_selectedClass);
                                   bookingNotifier.confirmFare();
                                   Navigator.pushNamed(context, '/live-tracking');
                                 },
@@ -484,7 +493,7 @@ class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
                                     ),
                                   ),
                                   Text(
-                                    "₹${((_lastEstimatedFare ?? 120.0) * (_selectedClass == 'Mini' ? 1.0 : _selectedClass == 'Sedan' ? 1.3 : _selectedClass == 'SUV' ? 1.8 : 2.3)).toStringAsFixed(0)}",
+                                    "₹${((_lastEstimatedFare ?? 120.0) * (_selectedClass == 'Bike' ? 0.55 : _selectedClass == 'Mini' ? 1.0 : _selectedClass == 'Sedan' ? 1.3 : _selectedClass == 'SUV' ? 1.8 : 2.3)).toStringAsFixed(0)}",
                                     style: const TextStyle(
                                       color: AppColors.textPrimary,
                                       fontWeight: FontWeight.w900,

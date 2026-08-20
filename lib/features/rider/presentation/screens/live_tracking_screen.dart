@@ -11,9 +11,11 @@ import '../../../../core/constants/map_style.dart';
 import '../../../../core/utils/marker_utils.dart';
 import '../../../../core/providers/location_provider.dart';
 import '../../providers/ride_provider.dart';
+import '../../models/ride_model.dart';
 import '../../../../shared/widgets/primary_button.dart';
 import '../../../../core/providers/app_mode_provider.dart';
 import '../../../../core/services/directions_service.dart';
+import '../../../../services/fake_location_service.dart';
 
 class LiveTrackingScreen extends ConsumerStatefulWidget {
   const LiveTrackingScreen({super.key});
@@ -96,12 +98,22 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
     });
 
     AsyncValue<RouteInfo?>? liveRouteInfoAsync;
-    if (driverPos != null && bookingState.destination != null) {
-      final routeArg = (
-        origin: driverPos!,
-        destination: LatLng(bookingState.destination!.latitude, bookingState.destination!.longitude),
-      );
-      liveRouteInfoAsync = ref.watch(routeInfoProvider(routeArg));
+    if (bookingState.status == RiderStatus.searching || bookingState.status == RiderStatus.noDriversAvailable) {
+      if (bookingState.pickup != null && bookingState.destination != null) {
+        final routeArg = (
+          origin: LatLng(bookingState.pickup!.latitude, bookingState.pickup!.longitude),
+          destination: LatLng(bookingState.destination!.latitude, bookingState.destination!.longitude),
+        );
+        liveRouteInfoAsync = ref.watch(routeInfoProvider(routeArg));
+      }
+    } else {
+      if (driverPos != null && bookingState.destination != null) {
+        final routeArg = (
+          origin: driverPos!,
+          destination: LatLng(bookingState.destination!.latitude, bookingState.destination!.longitude),
+        );
+        liveRouteInfoAsync = ref.watch(routeInfoProvider(routeArg));
+      }
     }
 
     // Calculate responsive position for floating action buttons
@@ -111,6 +123,8 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
     final maxAllowedBottom = screenHeight - appBarHeight - statusBarHeight - 80;
     final calculatedBottom = screenHeight * _currentSize + 16;
     final fabBottom = calculatedBottom > maxAllowedBottom ? maxAllowedBottom : calculatedBottom;
+
+    final showDriverFabs = bookingState.status != RiderStatus.searching && bookingState.status != RiderStatus.noDriversAvailable;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -125,9 +139,11 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
             Navigator.pop(context);
           },
         ),
-        title: const Text(
-          "Live Tracking",
-          style: TextStyle(
+        title: Text(
+          bookingState.status == RiderStatus.searching
+              ? "Finding Drivers"
+              : (bookingState.status == RiderStatus.noDriversAvailable ? "No Drivers" : "Live Tracking"),
+          style: const TextStyle(
             color: AppColors.textPrimary,
             fontWeight: FontWeight.bold,
             fontSize: 18,
@@ -152,47 +168,48 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
               ),
 
               // 2. Responsive Floating action buttons directly above the sheet (Call, Message, Share)
-              Positioned(
-                bottom: fabBottom,
-                right: 16,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Call FAB
-                    FloatingActionButton.small(
-                      heroTag: "call_btn",
-                      backgroundColor: AppColors.primary,
-                      onPressed: () {
-                        context.showSnackBar("Calling Ramesh: +91 98765 43210");
-                      },
-                      child: const Icon(Icons.phone_rounded, color: Colors.white),
-                    ),
-                    const SizedBox(width: 8),
-                    // Message FAB
-                    FloatingActionButton.small(
-                      heroTag: "msg_btn",
-                      backgroundColor: AppColors.primary,
-                      onPressed: () {
-                        context.showSnackBar("Trip Completed! Navigating to Wallet...", backgroundColor: AppColors.success);
-                        Future.delayed(const Duration(seconds: 1), () {
-                          Navigator.pushNamed(context, '/wallet');
-                        });
-                      },
-                      child: const Icon(Icons.forum_rounded, color: Colors.white),
-                    ),
-                    const SizedBox(width: 8),
-                    // Share FAB
-                    FloatingActionButton.small(
-                      heroTag: "share_btn",
-                      backgroundColor: Colors.white,
-                      onPressed: () {
-                        context.showSnackBar("Trip link copied to clipboard!");
-                      },
-                      child: const Icon(Icons.share_rounded, color: AppColors.textPrimary),
-                    ),
-                  ],
+              if (showDriverFabs)
+                Positioned(
+                  bottom: fabBottom,
+                  right: 16,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Call FAB
+                      FloatingActionButton.small(
+                        heroTag: "call_btn",
+                        backgroundColor: AppColors.primary,
+                        onPressed: () {
+                          context.showSnackBar("Calling ${bookingState.activeRide?.driver?.name ?? 'Driver'}: ${bookingState.activeRide?.driver?.phone ?? '+91 98765 43210'}");
+                        },
+                        child: const Icon(Icons.phone_rounded, color: Colors.white),
+                      ),
+                      const SizedBox(width: 8),
+                      // Message FAB
+                      FloatingActionButton.small(
+                        heroTag: "msg_btn",
+                        backgroundColor: AppColors.primary,
+                        onPressed: () {
+                          context.showSnackBar("Trip Completed! Navigating to Wallet...", backgroundColor: AppColors.success);
+                          Future.delayed(const Duration(seconds: 1), () {
+                            Navigator.pushNamed(context, '/wallet');
+                          });
+                        },
+                        child: const Icon(Icons.forum_rounded, color: Colors.white),
+                      ),
+                      const SizedBox(width: 8),
+                      // Share FAB
+                      FloatingActionButton.small(
+                        heroTag: "share_btn",
+                        backgroundColor: Colors.white,
+                        onPressed: () {
+                          context.showSnackBar("Trip link copied to clipboard!");
+                        },
+                        child: const Icon(Icons.share_rounded, color: AppColors.textPrimary),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
 
               // 3. Draggable scrollable live tracking sheet
               _buildDraggableTrackingPanel(context, bookingState, bookingNotifier, activeColors),
@@ -230,19 +247,34 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
           WidgetsBinding.instance.addPostFrameCallback((_) async {
             if (!_isDisposed && mounted && _mapController != null && bookingState.destination != null) {
               final destPos = LatLng(bookingState.destination!.latitude, bookingState.destination!.longitude);
-              _fitDriverAndDestination(driverPos, destPos);
+              
+              if (bookingState.status == RiderStatus.searching || bookingState.status == RiderStatus.noDriversAvailable) {
+                if (bookingState.pickup != null) {
+                  _fitDriverAndDestination(
+                    LatLng(bookingState.pickup!.latitude, bookingState.pickup!.longitude),
+                    destPos,
+                  );
+                }
+              } else {
+                _fitDriverAndDestination(driverPos, destPos);
+              }
             }
           });
         }
 
-        final Set<Marker> markers = {
-          Marker(
-            markerId: const MarkerId("live_driver"),
-            position: driverPos,
-            icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-            infoWindow: const InfoWindow(title: "Ramesh (Driver)"),
-          ),
-        };
+        final Set<Marker> markers = {};
+
+        // Add driver marker only when ride is accepted/active
+        if (bookingState.status != RiderStatus.searching && bookingState.status != RiderStatus.noDriversAvailable) {
+          markers.add(
+            Marker(
+              markerId: const MarkerId("live_driver"),
+              position: driverPos,
+              icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+              infoWindow: InfoWindow(title: "${bookingState.activeRide?.driver?.name ?? 'Driver'} (Driver)"),
+            ),
+          );
+        }
 
         if (bookingState.pickup != null) {
           markers.add(
@@ -282,9 +314,13 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
           ];
         }
 
+        final targetPos = (bookingState.status == RiderStatus.searching || bookingState.status == RiderStatus.noDriversAvailable)
+            ? (bookingState.pickup != null ? LatLng(bookingState.pickup!.latitude, bookingState.pickup!.longitude) : driverPos)
+            : driverPos;
+
         return GoogleMap(
           initialCameraPosition: CameraPosition(
-            target: driverPos,
+            target: targetPos,
             zoom: 14.5,
           ),
           markers: markers,
@@ -320,7 +356,7 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
         );
       },
       error: (err, stack) => const Center(
-        child: Text("Error fetching live driver coordinates"),
+        child: Text("Error fetching live coordinates"),
       ),
       loading: () => const Center(child: CircularProgressIndicator()),
     );
@@ -332,6 +368,205 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
     RideBookingNotifier bookingNotifier,
     AppModeColors activeColors,
   ) {
+    if (bookingState.status == RiderStatus.searching) {
+      return DraggableScrollableSheet(
+        controller: _sheetController,
+        initialChildSize: 0.28,
+        minChildSize: 0.18,
+        maxChildSize: 0.92,
+        snap: true,
+        builder: (BuildContext context, ScrollController scrollController) {
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {},
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(28),
+                  topRight: Radius.circular(28),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black12,
+                    blurRadius: 16,
+                    offset: Offset(0, -4),
+                  ),
+                ],
+              ),
+              child: SafeArea(
+                top: false,
+                bottom: true,
+                child: Column(
+                  children: [
+                    const SizedBox(height: 12),
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD1D5DB),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 32),
+                    const CircularProgressIndicator(
+                      strokeWidth: 4.0,
+                      valueColor: AlwaysStoppedAnimation<Color>(AppColors.primary),
+                    ),
+                    const SizedBox(height: 24),
+                    const Text(
+                      "Looking for nearby drivers...",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "Assigning the closest bike rider to you",
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                    const Spacer(),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                      child: PrimaryButton(
+                        text: "Cancel Search",
+                        onPressed: () {
+                          bookingNotifier.cancelRideSearch();
+                          Navigator.pop(context);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    }
+
+    if (bookingState.status == RiderStatus.noDriversAvailable) {
+      return DraggableScrollableSheet(
+        controller: _sheetController,
+        initialChildSize: 0.28,
+        minChildSize: 0.18,
+        maxChildSize: 0.92,
+        snap: true,
+        builder: (BuildContext context, ScrollController scrollController) {
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () {},
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(28),
+                  topRight: Radius.circular(28),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black12,
+                    blurRadius: 16,
+                    offset: Offset(0, -4),
+                  ),
+                ],
+              ),
+              child: SafeArea(
+                top: false,
+                bottom: true,
+                child: Column(
+                  children: [
+                    const SizedBox(height: 12),
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD1D5DB),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Icon(
+                      Icons.error_outline_rounded,
+                      color: Colors.red.shade500,
+                      size: 48,
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      "No drivers available nearby",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      "All bike drivers are currently busy. Try again in a few moments.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                    const Spacer(),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () {
+                                bookingNotifier.cancelRideSearch();
+                                Navigator.pop(context);
+                              },
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(vertical: 14),
+                                side: const BorderSide(color: AppColors.border),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                              ),
+                              child: const Text(
+                                "Cancel",
+                                style: TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: PrimaryButton(
+                              text: "Try Again",
+                              onPressed: () {
+                                bookingNotifier.tryAgain();
+                                Navigator.pop(context);
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    }
+
     return DraggableScrollableSheet(
       controller: _sheetController,
       initialChildSize: 0.28,
@@ -341,19 +576,19 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
       builder: (BuildContext context, ScrollController scrollController) {
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () {}, // Consume taps so they do not click the map underneath
+          onTap: () {},
           child: Container(
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: const BorderRadius.only(
+              borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(28),
                 topRight: Radius.circular(28),
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
+                  color: Colors.black12,
                   blurRadius: 16,
-                  offset: const Offset(0, -4),
+                  offset: Offset(0, -4),
                 ),
               ],
             ),
@@ -391,9 +626,9 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                "Ramesh",
-                                style: TextStyle(
+                              Text(
+                                bookingState.activeRide?.driver?.name ?? "Ramesh Kumar",
+                                style: const TextStyle(
                                   color: AppColors.textPrimary,
                                   fontWeight: FontWeight.bold,
                                   fontSize: 14,
@@ -404,7 +639,7 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
                                 children: [
                                   Expanded(
                                     child: Text(
-                                      "KA 03 AB 1234 • WagonR",
+                                      "${bookingState.activeRide?.driver?.vehiclePlate ?? 'KA 03 AB 1234'} • ${bookingState.activeRide?.driver?.vehicleModel ?? 'WagonR • White'}",
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
                                         color: Colors.grey.shade600,
@@ -510,9 +745,9 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
                                       fontSize: 13,
                                     ),
                                   ),
-                                  const SizedBox(height: 2),
+                                  const SizedBox(height: 4),
                                   Text(
-                                    "12.4 km • 24 min",
+                                    "${(bookingState.activeRide?.price != null ? (bookingState.activeRide!.price / 12) : 5.0).toStringAsFixed(1)} km • ${(bookingState.activeRide?.price != null ? (bookingState.activeRide!.price / 6) : 10.0).toStringAsFixed(0)} mins",
                                     style: TextStyle(color: Colors.grey.shade500, fontSize: 11, fontWeight: FontWeight.w600),
                                   ),
                                 ],
@@ -535,13 +770,13 @@ class _LiveTrackingScreenState extends ConsumerState<LiveTrackingScreen> {
                               const Icon(Icons.payment_rounded, color: AppColors.textPrimary, size: 20),
                               const SizedBox(width: 10),
                               const Expanded(
-                                  child: Text(
-                                    "Payment: Cash",
-                                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
-                                  ),
+                                child: Text(
+                                  "Payment: Cash",
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.textPrimary),
                                 ),
+                              ),
                               Text(
-                                "₹120",
+                                "₹${(bookingState.activeRide?.price ?? bookingState.price).toStringAsFixed(0)}",
                                 style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 13,

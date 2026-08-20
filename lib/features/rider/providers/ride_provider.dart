@@ -1,6 +1,7 @@
 // Ride booking notifier provider for flow controls and simulator
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../auth/providers/auth_provider.dart';
@@ -8,13 +9,14 @@ import '../models/ride_model.dart';
 import '../models/saved_place_model.dart';
 import '../../../services/fake_location_service.dart';
 import '../../../services/fake_tracking_service.dart';
+import '../../../core/services/firebase_service.dart';
 
 class RideBookingState {
   final RiderStatus status;
   final LocationPoint? pickup;
   final LocationPoint? destination;
   final Ride? activeRide;
-  final String selectedDriverClass; // "Auto Eco-Ride", "Bike Quick-Ride", "SUV Family-Ride"
+  final String selectedDriverClass; // "Auto Eco-Ride", "Bike Quick-Ride", "SUV Family-Ride", "Bike"
   final double price;
   final List<SavedPlace> savedPlaces;
   final List<Ride> pastRides;
@@ -24,7 +26,7 @@ class RideBookingState {
     this.pickup,
     this.destination,
     this.activeRide,
-    this.selectedDriverClass = "Auto Eco-Ride",
+    this.selectedDriverClass = "Bike",
     this.price = 0.0,
     this.savedPlaces = const [],
     this.pastRides = const [],
@@ -57,6 +59,7 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
   final Ref _ref;
   final SharedPreferences _prefs;
   Timer? _simulationTimer;
+  StreamSubscription? _rideSubscription;
   List<LocationPoint> _simulatedRoutePoints = [];
   int _simulatedRouteIndex = 0;
 
@@ -176,45 +179,96 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
     state = state.copyWith(price: price);
   }
 
-  void confirmFare() {
-    state = state.copyWith(status: RiderStatus.searching);
-    _simulateDriverMatch();
+  void tryAgain() {
+    state = state.copyWith(status: RiderStatus.fareEstimated);
   }
 
-  void _simulateDriverMatch() {
-    _simulationTimer?.cancel();
-    _simulationTimer = Timer(const Duration(seconds: 3), () {
-      final mockOtp = (1000 + (8999 * (DateTime.now().millisecondsSinceEpoch % 1000) / 1000)).toInt().toString();
+  void confirmFare() async {
+    state = state.copyWith(status: RiderStatus.searching);
 
-      final activeRide = Ride(
-        id: "ride_${DateTime.now().millisecondsSinceEpoch}",
-        pickup: state.pickup!,
-        destination: state.destination!,
-        price: state.price,
-        status: RiderStatus.accepted,
-        otp: mockOtp,
-        timestamp: DateTime.now(),
-        driver: Driver(
-          id: "d_${DateTime.now().millisecondsSinceEpoch}",
-          name: "Ramesh Kumar",
+    final pickup = state.pickup;
+    final destination = state.destination;
+    if (pickup == null || destination == null) return;
+
+    final distance = FakeLocationService.calculateDistance(pickup, destination);
+    final duration = distance * 2.0;
+
+    final rideId = "ride_${DateTime.now().millisecondsSinceEpoch}";
+    final user = _ref.read(authProvider);
+    final riderId = user.uid ?? "user_1234";
+    final riderName = user.name ?? "Alex Rider";
+
+    // Cancel old stream subscription
+    _rideSubscription?.cancel();
+
+    // Create the ride request document inside Cloud Firestore / Local Simulation
+    await FirebaseService.createRideRequest(
+      rideId: rideId,
+      riderId: riderId,
+      riderName: riderName,
+      pickupAddress: pickup.name,
+      pickupLat: pickup.latitude,
+      pickupLng: pickup.longitude,
+      destinationAddress: destination.name,
+      destinationLat: destination.latitude,
+      destinationLng: destination.longitude,
+      distanceKm: distance,
+      durationMinutes: duration,
+      estimatedFare: state.price,
+      paymentMethod: 'Cash',
+    );
+
+    // Setup client-side visual fail-safe trigger (runs if no driver accepts within 16s)
+    Timer(const Duration(seconds: 16), () {
+      if (state.status == RiderStatus.searching) {
+        debugPrint("No drivers available nearby");
+        state = state.copyWith(status: RiderStatus.noDriversAvailable);
+      }
+    });
+
+    // Listen to real-time status updates of the ride
+    _rideSubscription = FirebaseService.streamRide(rideId).listen((rideDoc) {
+      if (rideDoc.isEmpty) return;
+
+      final String status = rideDoc['status'] as String? ?? 'searching';
+
+      if (status == 'accepted' && state.status == RiderStatus.searching) {
+        final driverId = rideDoc['driverId'] as String? ?? 'd_ramesh';
+        final driverName = rideDoc['driverName'] as String? ?? 'Ramesh Kumar';
+        final vehiclePlate = rideDoc['driverVehicleNumber'] as String? ?? 'KA-03-AB-1234';
+
+        debugPrint("Driver accepted: $driverId. Status: searching -> accepted");
+
+        final driver = Driver(
+          id: driverId,
+          name: driverName,
           phone: "+91 98765 43210",
           photoUrl: "",
-          vehicleModel: state.selectedDriverClass == "Bike Quick-Ride"
-              ? "Bajaj CT100 (Bike)"
-              : (state.selectedDriverClass == "SUV Family-Ride" ? "Mahindra Bolero (SUV)" : "Mahindra Treo (Electric Auto)"),
-          vehiclePlate: "KA-05-AA-5678",
+          vehicleModel: "WagonR • White",
+          vehiclePlate: vehiclePlate,
           rating: 4.8,
-          currentLat: state.pickup!.latitude + 0.012,
-          currentLng: state.pickup!.longitude + 0.012,
-        ),
-      );
+          currentLat: pickup.latitude + 0.012,
+          currentLng: pickup.longitude + 0.012,
+        );
 
-      state = state.copyWith(
-        status: RiderStatus.accepted,
-        activeRide: () => activeRide,
-      );
+        final activeRide = Ride(
+          id: rideId,
+          pickup: pickup,
+          destination: destination,
+          price: state.price,
+          status: RiderStatus.accepted,
+          otp: "1234",
+          timestamp: DateTime.now(),
+          driver: driver,
+        );
 
-      _simulateDriverArriving();
+        state = state.copyWith(
+          status: RiderStatus.accepted,
+          activeRide: () => activeRide,
+        );
+
+        _simulateDriverArriving();
+      }
     });
   }
 
@@ -303,6 +357,11 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
       activeRide: () => completedRide,
       pastRides: updatedHistory,
     );
+
+    // Call complete ride on Firebase Service to free up driver availability
+    if (state.activeRide!.driver != null) {
+      FirebaseService.completeRide(state.activeRide!.id, state.activeRide!.driver!.id);
+    }
   }
 
   void rateDriver(double rating) {
@@ -323,7 +382,14 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
   }
 
   void cancelRideSearch() {
+    _rideSubscription?.cancel();
     _simulationTimer?.cancel();
+    
+    // Set status to completed on Firebase if we have an active ride
+    if (state.activeRide != null && state.activeRide!.driver != null) {
+      FirebaseService.completeRide(state.activeRide!.id, state.activeRide!.driver!.id);
+    }
+
     state = state.copyWith(
       status: RiderStatus.idle,
       activeRide: () => null,
@@ -334,6 +400,7 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
 
   @override
   void dispose() {
+    _rideSubscription?.cancel();
     _simulationTimer?.cancel();
     super.dispose();
   }

@@ -10,7 +10,8 @@ enum RiderStatus {
   arriving,
   inProgress,
   completed,
-  rated;
+  rated,
+  noDriversAvailable;
 
   String get displayName {
     switch (this) {
@@ -32,6 +33,8 @@ enum RiderStatus {
         return 'Trip Completed';
       case RiderStatus.rated:
         return 'Rated';
+      case RiderStatus.noDriversAvailable:
+        return 'No Drivers Available';
     }
   }
 }
