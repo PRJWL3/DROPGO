@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import '../../../../core/maps/taxi_town_map_widget.dart';
+import '../../../../core/maps/taxi_town_map_config.dart';
 import '../../../../core/constants/colors.dart';
 import '../../../../core/constants/spacing.dart';
 import '../../../../core/constants/text_styles.dart';
@@ -18,6 +20,8 @@ import 'dart:async';
 import 'package:geolocator/geolocator.dart';
 import '../../providers/driver_location_provider.dart';
 import '../../../../core/services/directions_service.dart';
+
+import '../../../../core/maps/taxi_town_map_camera.dart';
 
 class RideOptionsScreen extends ConsumerStatefulWidget {
   const RideOptionsScreen({super.key});
@@ -75,28 +79,12 @@ class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
   }
 
   LatLngBounds _getBounds(List<LatLng> points) {
-    double minLat = points.first.latitude;
-    double maxLat = points.first.latitude;
-    double minLng = points.first.longitude;
-    double maxLng = points.first.longitude;
-
-    for (var point in points) {
-      if (point.latitude < minLat) minLat = point.latitude;
-      if (point.latitude > maxLat) maxLat = point.latitude;
-      if (point.longitude < minLng) minLng = point.longitude;
-      if (point.longitude > maxLng) maxLng = point.longitude;
-    }
-
-    return LatLngBounds(
-      southwest: LatLng(minLat, minLng),
-      northeast: LatLng(maxLat, maxLng),
-    );
+    return TaxiTownMapCamera.getBounds(points);
   }
 
   void _fitRoute(List<LatLng> points) async {
     if (_isDisposed || !mounted || _mapController == null || points.isEmpty) return;
-    final bounds = _getBounds(points);
-    await _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+    await TaxiTownMapCamera.fitPoints(_mapController!, points, padding: 80);
   }
 
   void _animateMarker(String driverId, LatLng from, LatLng to) {
@@ -334,7 +322,14 @@ class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
 
         _lastEstimatedFare = routeInfo.estimatedFare;
 
-        return GoogleMap(
+        final mapPadding = EdgeInsets.only(
+          bottom: MediaQuery.sizeOf(context).height * 0.36 + 20.0,
+          top: 80.0,
+          left: 16.0,
+          right: 16.0,
+        );
+
+        return TaxiTownMap(
           initialCameraPosition: CameraPosition(
             target: LatLng(bookingState.pickup!.latitude, bookingState.pickup!.longitude),
             zoom: 13,
@@ -344,6 +339,7 @@ class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
           zoomControlsEnabled: false,
           compassEnabled: false,
           mapToolbarEnabled: false,
+          padding: mapPadding,
           markers: {
             Marker(
               markerId: const MarkerId("pickup"),
@@ -359,29 +355,9 @@ class _RideOptionsScreenState extends ConsumerState<RideOptionsScreen> {
             ),
             ..._driverMarkers.values,
           },
-          polylines: {
-            Polyline(
-              polylineId: const PolylineId("route_outline"),
-              points: routeInfo.points,
-              color: Colors.white,
-              width: 10,
-              jointType: JointType.round,
-              endCap: Cap.roundCap,
-              startCap: Cap.roundCap,
-            ),
-            Polyline(
-              polylineId: const PolylineId("route_fill"),
-              points: routeInfo.points,
-              color: const Color(0xFF1565FF),
-              width: 6,
-              jointType: JointType.round,
-              endCap: Cap.roundCap,
-              startCap: Cap.roundCap,
-            ),
-          },
+          polylines: buildRoutePolylines(routeInfo.points, const Color(0xFF1565FF)),
           onMapCreated: (controller) {
             _mapController = controller;
-            _mapController!.setMapStyle(premiumMapStyle);
             WidgetsBinding.instance.addPostFrameCallback((_) {
               _fitRoute(routeInfo.points);
             });

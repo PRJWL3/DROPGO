@@ -78,47 +78,47 @@ class MarkerUtils {
     
     // Draw shadow
     final Paint shadowPaint = Paint()
-      ..color = Colors.black.withOpacity(0.2)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
-    canvas.drawCircle(const Offset(size / 2, size / 2), size / 2.5, shadowPaint);
+      ..color = Colors.black.withOpacity(0.18)
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 4);
+    canvas.drawCircle(const Offset(size / 2, size / 2), size / 2.4, shadowPaint);
 
-    // Draw outer dark blue circular border
-    final Paint outerPaint = Paint()
-      ..color = const Color(0xFF1565FF) // Primary ride blue
-      ..style = PaintingStyle.fill;
-    canvas.drawCircle(const Offset(size / 2, size / 2), size / 2.7, outerPaint);
-
-    // Draw inner white circle
-    final Paint innerPaint = Paint()
+    // Draw white circular badge base
+    final Paint basePaint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.fill;
-    canvas.drawCircle(const Offset(size / 2, size / 2), size / 3.4, innerPaint);
+    canvas.drawCircle(const Offset(size / 2, size / 2), size / 2.5, basePaint);
 
-    // Draw a small bike-like silhouette (e.g. two wheels and a connecting line)
-    final Paint linePaint = Paint()
-      ..color = const Color(0xFF1565FF)
+    // Draw blue bike/scooter icon in the center
+    final Paint bikePaint = Paint()
+      ..color = const Color(0xFF1565FF) // Blue bike color
       ..strokeWidth = 3.5
+      ..strokeCap = StrokeCap.round
       ..style = PaintingStyle.stroke;
-    
-    // Wheels
-    final Paint wheelPaint = Paint()
-      ..color = const Color(0xFF1F2937) // Dark gray
-      ..style = PaintingStyle.fill;
-      
-    // Left wheel
-    canvas.drawCircle(const Offset(size * 0.38, size * 0.58), size / 14, wheelPaint);
-    // Right wheel
-    canvas.drawCircle(const Offset(size * 0.62, size * 0.58), size / 14, wheelPaint);
 
-    // Chassis / frame lines
+    final Paint wheelPaint = Paint()
+      ..color = const Color(0xFF1565FF)
+      ..style = PaintingStyle.fill;
+
+    // Wheels
+    canvas.drawCircle(const Offset(size * 0.35, size * 0.58), size / 14, wheelPaint);
+    canvas.drawCircle(const Offset(size * 0.65, size * 0.58), size / 14, wheelPaint);
+
+    // Chassis frame
     final Path framePath = Path()
-      ..moveTo(size * 0.38, size * 0.58)
-      ..lineTo(size * 0.50, size * 0.45)
-      ..lineTo(size * 0.62, size * 0.58)
-      ..moveTo(size * 0.50, size * 0.45)
-      ..lineTo(size * 0.50, size * 0.35)
-      ..lineTo(size * 0.45, size * 0.35);
-    canvas.drawPath(framePath, linePaint);
+      ..moveTo(size * 0.35, size * 0.58)
+      ..lineTo(size * 0.48, size * 0.58)
+      ..lineTo(size * 0.56, size * 0.44)
+      ..lineTo(size * 0.65, size * 0.58)
+      ..moveTo(size * 0.56, size * 0.44)
+      ..lineTo(size * 0.56, size * 0.35)
+      ..lineTo(size * 0.50, size * 0.35);
+    canvas.drawPath(framePath, bikePaint);
+
+    // Seat
+    final Path seatPath = Path()
+      ..moveTo(size * 0.42, size * 0.48)
+      ..lineTo(size * 0.52, size * 0.48);
+    canvas.drawPath(seatPath, bikePaint);
 
     final ui.Image image = await pictureRecorder.endRecording().toImage(size.toInt(), size.toInt());
     final data = await image.toByteData(format: ui.ImageByteFormat.png);

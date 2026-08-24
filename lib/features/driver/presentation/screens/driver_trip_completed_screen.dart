@@ -244,6 +244,7 @@ class _DriverTripCompletedScreenState extends ConsumerState<DriverTripCompletedS
               ElevatedButton(
                 onPressed: _isCashCollected
                     ? () {
+                        ref.read(activeDriverRideIdProvider.notifier).state = null;
                         Navigator.pushNamedAndRemoveUntil(
                           context,
                           '/driver-home',

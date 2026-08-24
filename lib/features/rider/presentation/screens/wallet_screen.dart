@@ -26,36 +26,7 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
     final walletState = ref.watch(walletNotifierProvider);
     final walletNotifier = ref.read(walletNotifierProvider.notifier);
 
-    final transactions = [
-      TransactionModel(
-        id: 'txn_1',
-        title: 'Ride to MG Road',
-        date: 'Today, 08:45 PM',
-        amount: 120.0,
-        type: TransactionType.debit,
-      ),
-      TransactionModel(
-        id: 'txn_2',
-        title: 'Ride to Airport',
-        date: 'Today, 09:05 AM',
-        amount: 280.0,
-        type: TransactionType.debit,
-      ),
-      TransactionModel(
-        id: 'txn_3',
-        title: 'Added Money',
-        date: 'Yesterday, 04:30 PM',
-        amount: 500.0,
-        type: TransactionType.credit,
-      ),
-      TransactionModel(
-        id: 'txn_4',
-        title: 'Ride to Indiranagar',
-        date: 'Yesterday, 08:10 AM',
-        amount: 160.0,
-        type: TransactionType.debit,
-      ),
-    ];
+    final transactions = walletState.transactions;
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -134,9 +105,9 @@ class _WalletScreenState extends ConsumerState<WalletScreen> {
                                 ),
                               ),
                               const SizedBox(height: 4),
-                              const Text(
-                                "₹560.00",
-                                style: TextStyle(
+                              Text(
+                                "₹${walletState.balance.toStringAsFixed(2)}",
+                                style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 34,
                                   fontWeight: FontWeight.w900,

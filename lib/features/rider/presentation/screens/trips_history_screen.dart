@@ -95,16 +95,17 @@ class TripsHistoryScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final bookingState = ref.watch(rideBookingNotifierProvider);
-    final history = bookingState.pastRides;
+    final historyAsync = ref.watch(riderPastRidesProvider);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text("Ride History"),
       ),
       body: SafeArea(
-        child: history.isEmpty
-            ? Center(
+        child: historyAsync.when(
+          data: (history) {
+            if (history.isEmpty) {
+              return Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -121,49 +122,54 @@ class TripsHistoryScreen extends ConsumerWidget {
                     ),
                   ],
                 ),
-              )
-            : ListView.builder(
-                padding: const EdgeInsets.all(16.0),
-                itemCount: history.length,
-                itemBuilder: (context, index) {
-                  final ride = history[history.length - 1 - index];
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    child: ListTile(
-                      onTap: () => _showRideDetails(context, ride),
-                      leading: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.1),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.directions_car_filled_outlined, color: AppColors.primary),
+              );
+            }
+            return ListView.builder(
+              padding: const EdgeInsets.all(16.0),
+              itemCount: history.length,
+              itemBuilder: (context, index) {
+                final ride = history[index];
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 12),
+                  child: ListTile(
+                    onTap: () => _showRideDetails(context, ride),
+                    leading: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.1),
+                        shape: BoxShape.circle,
                       ),
-                      title: Text(
-                        ride.destination.name,
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      child: const Icon(Icons.directions_car_filled_outlined, color: AppColors.primary),
+                    ),
+                    title: Text(
+                      ride.destination.name,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Text(
+                      "${ride.timestamp.day}/${ride.timestamp.month}/${ride.timestamp.year} • \$${ride.price.toStringAsFixed(0)}",
+                      style: const TextStyle(fontSize: 11, color: Colors.grey),
+                    ),
+                    trailing: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withOpacity(0.15),
+                        borderRadius: BorderRadius.circular(10),
                       ),
-                      subtitle: Text(
-                        "${ride.timestamp.day}/${ride.timestamp.month}/${ride.timestamp.year} • \$${ride.price.toStringAsFixed(0)}",
-                        style: const TextStyle(fontSize: 11, color: Colors.grey),
-                      ),
-                      trailing: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.15),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          ride.status.displayName,
-                          style: const TextStyle(color: AppColors.primary, fontSize: 10, fontWeight: FontWeight.bold),
-                        ),
+                      child: Text(
+                        ride.status.displayName,
+                        style: const TextStyle(color: AppColors.primary, fontSize: 10, fontWeight: FontWeight.bold),
                       ),
                     ),
-                  );
-                },
-              ),
+                  ),
+                );
+              },
+            );
+          },
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (err, stack) => Center(child: Text("Error loading history: $err")),
+        ),
       ),
     );
   }

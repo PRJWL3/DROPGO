@@ -18,117 +18,154 @@ class AppTopBar extends ConsumerWidget implements PreferredSizeWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final mode = ref.watch(appModeProvider);
-    final activeColors = ref.watch(appModeColorsProvider);
 
     return AnimatedContainer(
       duration: const Duration(milliseconds: 400),
-      color: activeColors.cardBackground,
-      padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 8.0),
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.04),
+            blurRadius: 6,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
       child: SafeArea(
         child: Row(
           children: [
             // Hamburger Menu Icon
             GestureDetector(
               onTap: onMenuTap,
-              child: Icon(
+              child: const Icon(
                 Icons.menu_rounded,
-                color: activeColors.textPrimary,
-                size: 24,
+                color: Color(0xFF0F172A),
+                size: 26,
               ),
             ),
-            const SizedBox(width: 16),
+            const SizedBox(width: 12),
 
-            // Animated Header (Fade & Scale transition)
+            // DropGo Logo
             Expanded(
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 400),
-                transitionBuilder: (child, animation) {
-                  return FadeTransition(
-                    opacity: animation,
-                    child: ScaleTransition(
-                      scale: Tween<double>(begin: 0.92, end: 1.0).animate(animation),
-                      child: child,
-                    ),
-                  );
-                },
-                child: Column(
-                  key: ValueKey(mode), // rebuild transition when mode toggles
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          mode == AppMode.rider ? Icons.directions_car_rounded : Icons.local_taxi_rounded,
-                          color: activeColors.primary,
-                          size: 20,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.location_on_rounded,
+                        color: Color(0xFF1565FF),
+                        size: 24,
+                      ),
+                      const SizedBox(width: 2),
+                      const Text(
+                        "DROPGO",
+                        style: TextStyle(
+                          color: Color(0xFF0F172A),
+                          fontWeight: FontWeight.w900,
+                          fontSize: 22,
+                          letterSpacing: -1.0,
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          activeColors.label,
-                          style: TextStyle(
-                            color: activeColors.textPrimary,
-                            fontWeight: FontWeight.w900,
-                            fontSize: 18,
-                            letterSpacing: -0.5,
+                      ),
+                    ],
+                  ),
+                  const Text(
+                    "Book a ride, anytime",
+                    style: TextStyle(
+                      color: Color(0xFF64748B),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // Double Pill Mode Switcher
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  GestureDetector(
+                    onTap: () {
+                      if (mode != AppMode.rider) {
+                        ref.read(appModeProvider.notifier).state = AppMode.rider;
+                        Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+                      }
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: mode == AppMode.rider ? const Color(0xFF1565FF) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.directions_car_rounded,
+                            color: mode == AppMode.rider ? Colors.white : const Color(0xFF64748B),
+                            size: 14,
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 1),
-                    Text(
-                      activeColors.subtitle,
-                      style: TextStyle(
-                        color: activeColors.textSecondary,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w500,
+                          const SizedBox(width: 4),
+                          Text(
+                            "Rider",
+                            style: TextStyle(
+                              color: mode == AppMode.rider ? Colors.white : const Color(0xFF64748B),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                  GestureDetector(
+                    onTap: () {
+                      if (mode != AppMode.driver) {
+                        ref.read(appModeProvider.notifier).state = AppMode.driver;
+                        Navigator.pushNamedAndRemoveUntil(context, '/driver-home', (route) => false);
+                      }
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 250),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: mode == AppMode.driver ? const Color(0xFF1565FF) : Colors.transparent,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.sports_motorsports_rounded,
+                            color: mode == AppMode.driver ? Colors.white : const Color(0xFF64748B),
+                            size: 14,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            "Driver",
+                            style: TextStyle(
+                              color: mode == AppMode.driver ? Colors.white : const Color(0xFF64748B),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
 
-            GestureDetector(
-              onTap: () {
-                final newMode = mode == AppMode.rider ? AppMode.driver : AppMode.rider;
-                ref.read(appModeProvider.notifier).state = newMode;
-                if (newMode == AppMode.driver) {
-                  Navigator.pushNamedAndRemoveUntil(context, '/driver-home', (route) => false);
-                } else {
-                  Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
-                }
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 400),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: activeColors.lightAccent,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: activeColors.primary.withOpacity(0.3), width: 1.2),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      mode == AppMode.rider ? Icons.person_rounded : Icons.directions_car_rounded,
-                      color: activeColors.primary,
-                      size: 16,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      mode == AppMode.rider ? "Rider" : "Driver",
-                      style: TextStyle(
-                        color: activeColors.primary,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 11,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
-            const SizedBox(width: 14),
+            const SizedBox(width: 12),
 
             // Notification Bell with Badge count
             Stack(
@@ -136,10 +173,10 @@ class AppTopBar extends ConsumerWidget implements PreferredSizeWidget {
               children: [
                 GestureDetector(
                   onTap: onNotificationTap,
-                  child: Icon(
+                  child: const Icon(
                     Icons.notifications_none_rounded,
-                    color: activeColors.textPrimary,
-                    size: 24,
+                    color: Color(0xFF0F172A),
+                    size: 26,
                   ),
                 ),
                 if (notificationCount > 0)
@@ -149,8 +186,8 @@ class AppTopBar extends ConsumerWidget implements PreferredSizeWidget {
                     child: Container(
                       width: 16,
                       height: 16,
-                      decoration: BoxDecoration(
-                        color: activeColors.primary,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFF1565FF),
                         shape: BoxShape.circle,
                       ),
                       alignment: Alignment.center,

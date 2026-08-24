@@ -5,6 +5,8 @@ import '../../../../core/providers/app_mode_provider.dart';
 import '../../../../core/utils/extensions.dart';
 import '../../../../core/utils/web_helper.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import '../../../../core/maps/taxi_town_map_widget.dart';
+import '../../../../core/maps/taxi_town_map_container.dart';
 import '../../../../core/providers/location_provider.dart';
 import '../../../rider/presentation/widgets/app_top_bar.dart';
 import '../../../rider/presentation/widgets/bottom_nav_bar.dart';
@@ -30,6 +32,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
   bool _isOnline = false;
   int _currentNavIndex = 0;
   GoogleMapController? _mapController;
+  LatLng? _driverPos;
 
   StreamSubscription<Position>? _positionSubscription;
   StreamSubscription<Map<String, dynamic>>? _notificationSubscription;
@@ -67,13 +70,26 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
     
     _lastUpdatedPosition = null;
     _lastUpdateTime = null;
+    _driverPos = null;
 
     if (val) {
+      ref.read(activeDriverRideIdProvider.notifier).state = null;
       debugPrint("DRIVER ONLINE: d_ramesh");
       
       try {
         _fcmToken = await FirebaseService.getFcmToken().timeout(const Duration(seconds: 15));
         
+        final service = ref.read(locationServiceProvider);
+        double initialLat = 12.9716;
+        double initialLng = 77.5946;
+        try {
+          final pos = await service.getCurrentLocation().timeout(const Duration(seconds: 6));
+          initialLat = pos.latitude;
+          initialLng = pos.longitude;
+        } catch (e) {
+          debugPrint("Failed to fetch initial GPS location: $e. Falling back to Bangalore coordinates.");
+        }
+
         // Step 2: Immediate driver status registration & readback validation
         await FirebaseService.updateDriverStatus(
           driverId: "d_ramesh",
@@ -81,13 +97,13 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
           phone: "+91 98765 43210",
           vehicleNumber: "KA-05-AA-5678",
           rating: 4.8,
-          lat: 12.9716,
-          lng: 77.5946,
+          lat: initialLat,
+          lng: initialLng,
           isOnline: true,
           isAvailable: true,
           token: _fcmToken ?? "mock_token",
         ).timeout(const Duration(seconds: 15));
-        debugPrint("DRIVER LOCATION: 12.9716, 77.5946");
+        debugPrint("DRIVER LOCATION: $initialLat, $initialLng");
         
         debugPrint("========== DRIVER LISTENER STARTED ==========");
         debugPrint("Driver ID: d_ramesh");
@@ -132,6 +148,9 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
           _lastUpdateTime = now;
 
           try {
+            final activeRideId = ref.read(activeDriverRideIdProvider);
+            final isAvailable = activeRideId == null;
+
             await FirebaseService.updateDriverStatus(
               driverId: "d_ramesh",
               name: "Ramesh Kumar",
@@ -141,7 +160,7 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
               lat: position.latitude,
               lng: position.longitude,
               isOnline: true,
-              isAvailable: true,
+              isAvailable: isAvailable,
               token: _fcmToken ?? "mock_token",
             ).timeout(const Duration(seconds: 15));
             debugPrint("DRIVER LOCATION: ${position.latitude}, ${position.longitude}");
@@ -598,13 +617,10 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
 
                   const SizedBox(height: 16),
 
-                  // Map card container
-                  Container(
+                  // Map card container (TaxiTownMapContainer & TaxiTownMap)
+                  TaxiTownMapContainer(
                     height: 200,
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(color: activeColors.border, width: 1.2),
-                    ),
+                    borderColor: activeColors.border,
                     child: !isGoogleMapsInitialized()
                         ? const Center(
                             child: Column(
@@ -618,29 +634,35 @@ class _DriverHomeScreenState extends ConsumerState<DriverHomeScreen> {
                           )
                         : ref.watch(liveLocationProvider).when(
                             data: (position) {
-                        if (_isOnline && _mapController != null) {
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            _mapController!.animateCamera(
-                              CameraUpdate.newCameraPosition(
-                                CameraPosition(
-                                  target: LatLng(position.latitude, position.longitude),
-                                  zoom: 16.0,
+                        final driverLatLng = LatLng(position.latitude, position.longitude);
+                        
+                        bool isFirstTime = _driverPos == null;
+                        if (isFirstTime) {
+                          _driverPos = driverLatLng;
+                          if (_mapController != null) {
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              _mapController!.animateCamera(
+                                CameraUpdate.newCameraPosition(
+                                  CameraPosition(
+                                    target: driverLatLng,
+                                    zoom: 16.0,
+                                  ),
                                 ),
-                              ),
-                            );
-                          });
+                              );
+                            });
+                          }
                         }
 
                         final carMarker = Marker(
                           markerId: const MarkerId("driver_car"),
-                          position: LatLng(position.latitude, position.longitude),
+                          position: driverLatLng,
                           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
                           infoWindow: const InfoWindow(title: "My Vehicle"),
                         );
 
-                        return GoogleMap(
+                        return TaxiTownMap(
                           initialCameraPosition: CameraPosition(
-                            target: LatLng(position.latitude, position.longitude),
+                            target: driverLatLng,
                             zoom: 16.0,
                           ),
                           myLocationEnabled: true,

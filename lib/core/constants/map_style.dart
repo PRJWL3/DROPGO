@@ -1,11 +1,6 @@
 const String premiumMapStyle = r'''
 [
   {
-    "featureType": "all",
-    "elementType": "labels.icon",
-    "stylers": [{"visibility": "off"}]
-  },
-  {
     "featureType": "administrative",
     "elementType": "labels.text.fill",
     "stylers": [{"color": "#445566"}]
@@ -18,7 +13,12 @@ const String premiumMapStyle = r'''
   {
     "featureType": "poi",
     "elementType": "all",
-    "stylers": [{"visibility": "off"}]
+    "stylers": [{"visibility": "on"}]
+  },
+  {
+    "featureType": "poi.business",
+    "elementType": "all",
+    "stylers": [{"visibility": "on"}]
   },
   {
     "featureType": "road.highway",
@@ -53,7 +53,7 @@ const String premiumMapStyle = r'''
   {
     "featureType": "transit",
     "elementType": "all",
-    "stylers": [{"visibility": "off"}]
+    "stylers": [{"visibility": "on"}]
   },
   {
     "featureType": "water",

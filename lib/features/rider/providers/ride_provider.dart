@@ -388,10 +388,7 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
       debugPrint("DRIVER: Firebase project ID: ${driverProjectId ?? 'Unknown (not written/read yet)'}");
       debugPrint("RIDER: Firebase project ID: $laptopProjectId");
       if (driverProjectId != null && driverProjectId != laptopProjectId) {
-        debugPrint("CRITICAL: RIDER AND DRIVER WEB CLIENTS ARE USING DIFFERENT FIREBASE PROJECTS");
-        _ref.read(rideErrorProvider.notifier).state = "RIDER AND DRIVER WEB CLIENTS ARE USING DIFFERENT FIREBASE PROJECTS";
-        state = state.copyWith(status: RiderStatus.noDriversAvailable);
-        return; // STOP execution
+        debugPrint("WARNING: RIDER AND DRIVER WEB CLIENTS SEEM TO BE REGISTERED WITH DIFFERENT FIREBASE PROJECT IDs (Driver: $driverProjectId vs Rider: $laptopProjectId). Proceeding anyway...");
       } else if (driverProjectId != null) {
         debugPrint("Firebase project ID comparison MATCHED: $laptopProjectId");
       }
@@ -460,9 +457,15 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
 
     // Listen to real-time status updates of the ride
     _rideSubscription = FirebaseService.streamRide(rideId).listen((rideDoc) {
-      if (rideDoc.isEmpty) return;
+      if (rideDoc.isEmpty) {
+        debugPrint("RIDER STREAM: Received empty ride document update.");
+        return;
+      }
 
       final String status = rideDoc['status'] as String? ?? 'searching';
+      final String otp = rideDoc['otp'] as String? ?? '----';
+
+      debugPrint("RIDER STREAM: Received update. Firestore status = $status, current Rider state.status = ${state.status}");
 
       if (status == 'accepted' && state.status == RiderStatus.searching) {
         final driverId = rideDoc['driverId'] as String? ?? 'd_ramesh';
@@ -489,7 +492,7 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
           destination: destination,
           price: state.price,
           status: RiderStatus.accepted,
-          otp: "1234",
+          otp: otp,
           timestamp: DateTime.now(),
           driver: driver,
         );
@@ -499,7 +502,41 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
           activeRide: () => activeRide,
         );
 
-        _simulateDriverArriving();
+        if (!FirebaseService.isFirebaseAvailable) {
+          _simulateDriverArriving();
+        }
+      } else if (status == 'accepted' && state.status == RiderStatus.accepted) {
+        if (state.activeRide != null && state.activeRide!.otp != otp) {
+          final active = state.activeRide!.copyWith(otp: otp);
+          state = state.copyWith(activeRide: () => active);
+        }
+      } else if (status == 'driver_arrived' && (state.status == RiderStatus.accepted || state.status == RiderStatus.searching)) {
+        debugPrint("Ride status updated from Firestore to: driver_arrived");
+        if (state.activeRide != null) {
+          final active = state.activeRide!.copyWith(status: RiderStatus.arriving);
+          state = state.copyWith(
+            status: RiderStatus.arriving,
+            activeRide: () => active,
+          );
+        }
+      } else if (status == 'in_progress' && (state.status == RiderStatus.searching || state.status == RiderStatus.accepted || state.status == RiderStatus.arriving)) {
+        debugPrint("Ride status updated from Firestore to: in_progress");
+        if (state.activeRide != null) {
+          final active = state.activeRide!.copyWith(status: RiderStatus.inProgress);
+          state = state.copyWith(
+            status: RiderStatus.inProgress,
+            activeRide: () => active,
+          );
+        }
+      } else if (status == 'completed' && state.status == RiderStatus.inProgress) {
+        debugPrint("Ride status updated from Firestore to: completed");
+        if (state.activeRide != null) {
+          final active = state.activeRide!.copyWith(status: RiderStatus.completed);
+          state = state.copyWith(
+            status: RiderStatus.completed,
+            activeRide: () => active,
+          );
+        }
       }
     });
   }
@@ -590,6 +627,19 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
       pastRides: updatedHistory,
     );
 
+    // Write debit transaction to Firestore (real-time wallet sync)
+    if (FirebaseService.isFirebaseAvailable) {
+      final auth = _ref.read(authProvider);
+      final userId = auth.uid ?? 'user_1234';
+      FirebaseFirestore.instance.collection('transactions').add({
+        'userId': userId,
+        'title': 'Ride to ${completedRide.destination.name}',
+        'amount': completedRide.price,
+        'type': 'debit',
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    }
+
     // Call complete ride on Firebase Service to free up driver availability
     if (state.activeRide!.driver != null) {
       FirebaseService.completeRide(state.activeRide!.id, state.activeRide!.driver!.id);
@@ -623,10 +673,8 @@ class RideBookingNotifier extends StateNotifier<RideBookingState> {
     }
 
     state = state.copyWith(
-      status: RiderStatus.idle,
+      status: RiderStatus.fareEstimated,
       activeRide: () => null,
-      pickup: () => null,
-      destination: () => null,
     );
   }
 
@@ -644,3 +692,87 @@ final rideBookingNotifierProvider = StateNotifierProvider<RideBookingNotifier, R
 });
 
 final rideErrorProvider = StateProvider<String?>((ref) => null);
+
+final riderPastRidesProvider = StreamProvider<List<Ride>>((ref) {
+  final auth = ref.watch(authProvider);
+  final riderId = auth.uid ?? 'user_1234';
+  
+  if (!FirebaseService.isFirebaseAvailable) {
+    // Return the local/preferences list
+    final bookingState = ref.watch(rideBookingNotifierProvider);
+    return Stream.value(bookingState.pastRides);
+  }
+  
+  return FirebaseFirestore.instance
+      .collection('rides')
+      .where('riderId', isEqualTo: riderId)
+      .snapshots()
+      .map((snapshot) {
+        final list = snapshot.docs.map((doc) {
+          final data = doc.data();
+          
+          // Map Firestore map to Ride model
+          final pickup = LocationPoint(
+            latitude: (data['pickupLatitude'] as num?)?.toDouble() ?? 0.0,
+            longitude: (data['pickupLongitude'] as num?)?.toDouble() ?? 0.0,
+            name: data['pickupAddress'] as String? ?? 'Pickup Point',
+          );
+          
+          final dest = LocationPoint(
+            latitude: (data['destinationLatitude'] as num?)?.toDouble() ?? 0.0,
+            longitude: (data['destinationLongitude'] as num?)?.toDouble() ?? 0.0,
+            name: data['destinationAddress'] as String? ?? 'Destination',
+          );
+          
+          RiderStatus status = RiderStatus.completed;
+          final statusStr = data['status'] as String? ?? 'completed';
+          if (statusStr == 'completed') {
+            status = RiderStatus.completed;
+          } else if (statusStr == 'rated') {
+            status = RiderStatus.rated;
+          } else if (statusStr == 'searching') {
+            status = RiderStatus.searching;
+          } else if (statusStr == 'accepted') {
+            status = RiderStatus.accepted;
+          } else if (statusStr == 'driver_arrived') {
+            status = RiderStatus.arriving;
+          } else if (statusStr == 'in_progress') {
+            status = RiderStatus.inProgress;
+          }
+          
+          Driver? driver;
+          if (data['driverId'] != null) {
+            driver = Driver(
+              id: data['driverId'] as String? ?? '',
+              name: data['driverName'] as String? ?? 'Ramesh Kumar',
+              phone: data['driverPhone'] as String? ?? '+91 98765 43210',
+              photoUrl: '',
+              vehicleModel: data['driverVehicleModel'] as String? ?? 'Electric Bike',
+              vehiclePlate: data['driverVehicleNumber'] as String? ?? 'KA-05-AA-1111',
+            );
+          }
+          
+          DateTime time = DateTime.now();
+          if (data['createdAt'] is Timestamp) {
+            time = (data['createdAt'] as Timestamp).toDate();
+          } else if (data['createdAt'] is String) {
+            time = DateTime.parse(data['createdAt'] as String);
+          }
+          
+          return Ride(
+            id: doc.id,
+            pickup: pickup,
+            destination: dest,
+            price: (data['estimatedFare'] as num?)?.toDouble() ?? 0.0,
+            status: status,
+            otp: data['otp'] as String? ?? '0000',
+            timestamp: time,
+            driver: driver,
+          );
+        }).toList();
+        
+        // Sort in memory to avoid Firestore Index requirement
+        list.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        return list;
+      });
+});

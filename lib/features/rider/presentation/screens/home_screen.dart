@@ -13,6 +13,8 @@ import '../widgets/bottom_nav_bar.dart';
 import '../widgets/location_card.dart';
 import '../widgets/quick_place_card.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import '../../../../core/maps/taxi_town_map_widget.dart';
+import '../../../../core/maps/taxi_town_map_camera.dart';
 import '../../../../core/providers/location_provider.dart';
 import '../../../../core/services/location_service.dart';
 import '../../../../core/utils/web_helper.dart';
@@ -47,9 +49,36 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   final Map<String, LatLng> _driverPositions = {};
   bool _hasFitInitialDrivers = false;
 
+  bool _hasInitializedLocation = false;
+  double _mapPaddingBottom = 220.0;
+
+  void _onSheetSizeChanged() {
+    if (_isDisposed || !mounted) return;
+    if (_sheetController.isAttached) {
+      final size = _sheetController.size;
+      final screenHeight = MediaQuery.sizeOf(context).height;
+      double targetPadding;
+      if (size <= 0.35) {
+        targetPadding = 0.32 * screenHeight + 16.0;
+      } else if (size <= 0.60) {
+        targetPadding = 0.52 * screenHeight + 16.0;
+      } else {
+        targetPadding = 0.92 * screenHeight + 16.0;
+      }
+      
+      if ((targetPadding - _mapPaddingBottom).abs() > 5.0) {
+        setState(() {
+          _mapPaddingBottom = targetPadding;
+        });
+        debugPrint("MAP PADDING SNAPPED TO: $_mapPaddingBottom");
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    _sheetController.addListener(_onSheetSizeChanged);
     // Load custom pickup marker icon
     MarkerUtils.getPickupMarker().then((icon) {
       if (mounted) {
@@ -109,39 +138,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   void _recenterMap(double lat, double lng) async {
     if (_isDisposed || !mounted || _mapController == null) return;
-    await _mapController!.animateCamera(
-      CameraUpdate.newCameraPosition(
-        CameraPosition(
-          target: LatLng(lat, lng),
-          zoom: 15.0,
-        ),
-      ),
-    );
+    await TaxiTownMapCamera.centerOnLocation(_mapController!, LatLng(lat, lng), zoom: 16.0);
   }
 
   LatLngBounds _getBounds(List<LatLng> points) {
-    double minLat = points.first.latitude;
-    double maxLat = points.first.latitude;
-    double minLng = points.first.longitude;
-    double maxLng = points.first.longitude;
-
-    for (var point in points) {
-      if (point.latitude < minLat) minLat = point.latitude;
-      if (point.latitude > maxLat) maxLat = point.latitude;
-      if (point.longitude < minLng) minLng = point.longitude;
-      if (point.longitude > maxLng) maxLng = point.longitude;
-    }
-
-    return LatLngBounds(
-      southwest: LatLng(minLat, minLng),
-      northeast: LatLng(maxLat, maxLng),
-    );
+    return TaxiTownMapCamera.getBounds(points);
   }
 
   void _fitRoute(List<LatLng> points) async {
     if (_isDisposed || !mounted || _mapController == null || points.isEmpty) return;
-    final bounds = _getBounds(points);
-    await _mapController!.animateCamera(CameraUpdate.newLatLngBounds(bounds, 80));
+    await TaxiTownMapCamera.fitPoints(_mapController!, points, padding: 80.0);
   }
 
   void _animateMarker(String driverId, LatLng from, LatLng to) {
@@ -180,8 +186,40 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   void _syncDriverMarkers(List<Map<String, dynamic>> drivers) {
     if (!mounted) return;
 
-    // Filter vehicleType to match "bike"
-    final eligibleDrivers = drivers.where((d) => d['vehicleType'] == 'bike').toList();
+    final bookingState = ref.read(rideBookingNotifierProvider);
+    LatLng? pickupLatLng;
+    if (bookingState.pickup != null) {
+      pickupLatLng = LatLng(bookingState.pickup!.latitude, bookingState.pickup!.longitude);
+    } else {
+      final locVal = ref.read(currentLocationProvider).value;
+      if (locVal != null) {
+        pickupLatLng = LatLng(locVal.latitude, locVal.longitude);
+      }
+    }
+
+    // Filter vehicleType to match "bike" and within 5.0 km radius
+    final eligibleDrivers = drivers.where((d) {
+      if (d['vehicleType'] != 'bike') return false;
+      final lat = (d['currentLatitude'] as num?)?.toDouble();
+      final lng = (d['currentLongitude'] as num?)?.toDouble();
+      if (lat == null || lng == null) return false;
+      
+      if (pickupLatLng != null) {
+        final distanceMeters = Geolocator.distanceBetween(
+          pickupLatLng.latitude,
+          pickupLatLng.longitude,
+          lat,
+          lng,
+        );
+        final distanceKm = distanceMeters / 1000.0;
+        return distanceKm <= 5.0; // 5 km radius limit
+      }
+      return true; // if no user location, show all online bikes
+    }).toList();
+
+    // Debug logs when actual data changes (Requirement 13)
+    debugPrint("DRIVER DATA UPDATED");
+    debugPrint("Eligible drivers: ${eligibleDrivers.length}");
 
     final currentIds = eligibleDrivers.map((d) => d['driverId'] as String).toSet();
 
@@ -190,13 +228,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     for (var id in removedIds) {
       _driverMarkers.remove(id);
       _driverPositions.remove(id);
-      debugPrint("DRIVER REMOVED: $id");
-    }
-
-    final bookingState = ref.read(rideBookingNotifierProvider);
-    LatLng? pickupLatLng;
-    if (bookingState.pickup != null) {
-      pickupLatLng = LatLng(bookingState.pickup!.latitude, bookingState.pickup!.longitude);
+      debugPrint("REAL DRIVER REMOVED\nDriver ID: $id");
     }
 
     for (var driver in eligibleDrivers) {
@@ -230,14 +262,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         );
         _driverPositions[driverId] = newLatLng;
-        debugPrint("DRIVER ADDED: $driverId");
+        
       } else {
         // Step 7: Animate movement locally
         final oldLatLng = _driverPositions[driverId];
         if (oldLatLng != null && (oldLatLng.latitude != lat || oldLatLng.longitude != lng)) {
           _animateMarker(driverId, oldLatLng, newLatLng);
           _driverPositions[driverId] = newLatLng;
-          debugPrint("DRIVER MOVED: $driverId");
+
+          // Debug logs (Requirement 13)
+          debugPrint("DRIVER LOCATION UPDATED");
+          debugPrint("Driver ID: $driverId");
         }
       }
     }
@@ -288,11 +323,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    debugPrint("RIDER HOME BUILD");
     final mode = ref.watch(appModeProvider);
     final activeColors = ref.watch(appModeColorsProvider);
     final bookingState = ref.watch(rideBookingNotifierProvider);
     final isRouteSelected = bookingState.pickup != null && bookingState.destination != null;
 
+    // Centering camera on real GPS location on first load
+    ref.listen<AsyncValue<Position>>(currentLocationProvider, (previous, next) {
+      next.whenData((pos) {
+        if (!_hasInitializedLocation && _mapController != null) {
+          _hasInitializedLocation = true;
+          final target = bookingState.pickup != null
+              ? LatLng(bookingState.pickup!.latitude, bookingState.pickup!.longitude)
+              : LatLng(pos.latitude, pos.longitude);
+          TaxiTownMapCamera.centerOnLocation(_mapController!, target, zoom: 16.0);
+        }
+      });
+    });
+
+    // Listen to online drivers stream for real-time Firestore sync
     ref.listen<AsyncValue<List<Map<String, dynamic>>>>(onlineDriversProvider, (previous, next) {
       next.whenData((drivers) {
         _syncDriverMarkers(drivers);
@@ -385,13 +435,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     left: 16,
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
+                        backgroundColor: const Color(0xFF1565FF),
                         foregroundColor: Colors.white,
                         elevation: 4,
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
                       ),
-                      icon: const Icon(Icons.bug_report, size: 14),
-                      label: const Text("TEST FIRESTORE RIDE", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                      icon: const Icon(Icons.local_fire_department_rounded, size: 16, color: Colors.white),
+                      label: const Text(
+                        "TEST FIRESTORE RIDE",
+                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, letterSpacing: 0.2),
+                      ),
                       onPressed: () async {
                         final timestamp = DateTime.now().millisecondsSinceEpoch;
                         final testRideId = "test_$timestamp";
@@ -419,6 +475,56 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           debugPrint("Test ride skipped: Firebase is not available.");
                         }
                       },
+                    ),
+                  ),
+
+                  // 3.2. Nearby Drivers Floating Indicator
+                  Positioned(
+                    bottom: (MediaQuery.sizeOf(context).height * 0.32) + 16,
+                    left: 0,
+                    right: 0,
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.06),
+                              blurRadius: 10,
+                              offset: const Offset(0, 3),
+                            ),
+                          ],
+                          border: Border.all(color: const Color(0xFFE2E8F0), width: 1.2),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(
+                                color: FirebaseService.isFirebaseAvailable ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              !FirebaseService.isFirebaseAvailable
+                                  ? "Firebase disconnected"
+                                  : (_driverMarkers.isEmpty
+                                      ? "No nearby drivers"
+                                      : "${_driverMarkers.length} ${_driverMarkers.length == 1 ? 'driver' : 'drivers'} nearby"),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
 
@@ -550,7 +656,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     // Add nearby online driver markers
     markers.addAll(_driverMarkers.values);
 
-    return GoogleMap(
+    return TaxiTownMap(
       initialCameraPosition: CameraPosition(
         target: initialTarget,
         zoom: initialZoom,
@@ -560,11 +666,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       zoomControlsEnabled: false,
       compassEnabled: false,
       mapToolbarEnabled: false,
+      padding: EdgeInsets.only(bottom: _mapPaddingBottom, top: 100.0, left: 16.0, right: 16.0),
       markers: markers,
       polylines: polylines,
       onMapCreated: (controller) {
         _mapController = controller;
-        _mapController!.setMapStyle(premiumMapStyle);
+        if (!_hasInitializedLocation) {
+          final loc = ref.read(currentLocationProvider).value;
+          if (loc != null) {
+            _hasInitializedLocation = true;
+            final target = bookingState.pickup != null
+                ? LatLng(bookingState.pickup!.latitude, bookingState.pickup!.longitude)
+                : LatLng(loc.latitude, loc.longitude);
+            TaxiTownMapCamera.centerOnLocation(controller, target, zoom: 16.0);
+          }
+        }
         if (routeInfo != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             _fitRoute(routeInfo!.points);
@@ -639,26 +755,52 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                         Navigator.pushNamed(context, '/search');
                       },
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                         decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: Colors.grey.shade200, width: 1.1),
+                          color: const Color(0xFFF1F5F9), // Light grey background
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: const Color(0xFFE2E8F0), width: 1.1),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.search_rounded, color: AppColors.primary, size: 22),
+                            const Icon(Icons.search_rounded, color: Color(0xFF1565FF), size: 24),
                             const SizedBox(width: 12),
                             Expanded(
                               child: Text(
                                 bookingState.destination?.name ?? "Where do you want to go?",
                                 style: TextStyle(
-                                  color: bookingState.destination != null ? AppColors.textPrimary : AppColors.textSecondary,
+                                  color: bookingState.destination != null ? const Color(0xFF0F172A) : const Color(0xFF64748B),
                                   fontSize: 14,
                                   fontWeight: FontWeight.w600,
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            // Now dropdown button
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(color: const Color(0xFFE2E8F0), width: 1.1),
+                              ),
+                              child: Row(
+                                children: [
+                                  const Icon(Icons.access_time_rounded, color: Color(0xFF0F172A), size: 14),
+                                  const SizedBox(width: 4),
+                                  const Text(
+                                    "Now",
+                                    style: TextStyle(
+                                      color: Color(0xFF0F172A),
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 12,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 2),
+                                  const Icon(Icons.keyboard_arrow_down_rounded, color: Color(0xFF64748B), size: 14),
+                                ],
                               ),
                             ),
                           ],
@@ -750,70 +892,146 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                       const SizedBox(height: 20),
                     ],
 
-                    const Text(
-                      "Recent & Saved Places",
-                      style: TextStyle(
-                        color: AppColors.textPrimary,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: List.generate(4, (index) {
-                        final categories = [
-                          {'label': 'Market', 'icon': Icons.storefront_rounded},
-                          {'label': 'Hospital', 'icon': Icons.add_box_rounded},
-                          {'label': 'Bus Stand', 'icon': Icons.directions_bus_rounded},
-                          {'label': 'Airport', 'icon': Icons.flight_takeoff_rounded},
-                        ];
-                        final cat = categories[index];
-                        return QuickPlaceCard(
-                          label: cat['label'] as String,
-                          icon: cat['icon'] as IconData,
-                          onTap: () {
+                      children: [
+                        const Text(
+                          "Saved Places",
+                          style: TextStyle(
+                            color: Color(0xFF0F172A),
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () {
                             ref.read(rideBookingNotifierProvider.notifier).startSelectingRoute();
                             Navigator.pushNamed(context, '/search');
                           },
-                        );
-                      }),
-                    ),
-                    const SizedBox(height: 20),
-
-                    Container(
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.grey.shade100, width: 1.2),
-                      ),
-                      child: Column(
-                        children: [
-                          ListTile(
-                            leading: const CircleAvatar(
-                              backgroundColor: Color(0xFFEAF2FF),
-                              child: Icon(Icons.home_rounded, color: AppColors.primary, size: 20),
+                          child: const Text(
+                            "See all",
+                            style: TextStyle(
+                              color: Color(0xFF1565FF),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
                             ),
-                            title: const Text("Home", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                            subtitle: const Text("Ramapuram, Anantapur", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+
+                    // Horizontally scrollable list of Saved Places cards
+                    SizedBox(
+                      height: 120,
+                      child: ListView(
+                        scrollDirection: Axis.horizontal,
+                        physics: const BouncingScrollPhysics(),
+                        clipBehavior: Clip.none,
+                        children: [
+                          _buildSavedPlaceCard(
+                            icon: Icons.home_rounded,
+                            label: "Home",
+                            distance: "12.4 km",
                             onTap: () {
                               ref.read(rideBookingNotifierProvider.notifier).startSelectingRoute();
                               Navigator.pushNamed(context, '/search');
                             },
                           ),
-                          const Divider(height: 1, indent: 56),
-                          ListTile(
-                            leading: const CircleAvatar(
-                              backgroundColor: Color(0xFFEAF2FF),
-                              child: Icon(Icons.school_rounded, color: AppColors.primary, size: 20),
-                            ),
-                            title: const Text("College", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                            subtitle: const Text("Alliance University", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                          const SizedBox(width: 12),
+                          _buildSavedPlaceCard(
+                            icon: Icons.work_rounded,
+                            label: "Work",
+                            distance: "8.7 km",
                             onTap: () {
                               ref.read(rideBookingNotifierProvider.notifier).startSelectingRoute();
                               Navigator.pushNamed(context, '/search');
                             },
+                          ),
+                          const SizedBox(width: 12),
+                          _buildSavedPlaceCard(
+                            icon: Icons.storefront_rounded,
+                            label: "Market",
+                            distance: "3.2 km",
+                            onTap: () {
+                              ref.read(rideBookingNotifierProvider.notifier).startSelectingRoute();
+                              Navigator.pushNamed(context, '/search');
+                            },
+                          ),
+                          const SizedBox(width: 12),
+                          _buildSavedPlaceCard(
+                            icon: Icons.add_box_rounded,
+                            label: "Hospital",
+                            distance: "5.6 km",
+                            onTap: () {
+                              ref.read(rideBookingNotifierProvider.notifier).startSelectingRoute();
+                              Navigator.pushNamed(context, '/search');
+                            },
+                          ),
+                          const SizedBox(width: 12),
+                          _buildSavedPlaceCard(
+                            icon: Icons.directions_bus_rounded,
+                            label: "Bus Stand",
+                            distance: "4.3 km",
+                            onTap: () {
+                              ref.read(rideBookingNotifierProvider.notifier).startSelectingRoute();
+                              Navigator.pushNamed(context, '/search');
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+
+                    // DropGo safety banner card
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEAF2FF),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: const Color(0xFFD1E3FF), width: 1),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: const BoxDecoration(
+                              color: Color(0xFF1565FF),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.shield_outlined, color: Colors.white, size: 18),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: const [
+                                Text(
+                                  "Wherever you go, DropGo gets you there.",
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                                SizedBox(height: 2),
+                                Text(
+                                  "Safe rides • Local drivers • Simple fares",
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: Color(0xFF475569),
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          const Icon(
+                            Icons.sports_motorsports_rounded,
+                            color: Color(0xFF1565FF),
+                            size: 32,
                           ),
                         ],
                       ),
@@ -826,6 +1044,59 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ),
         );
       },
+    );
+  }
+
+  Widget _buildSavedPlaceCard({
+    required IconData icon,
+    required String label,
+    required String distance,
+    required VoidCallback onTap,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 90,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFF1F5F9), width: 1.5),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: const BoxDecoration(
+                color: Color(0xFFEAF2FF),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: const Color(0xFF1565FF), size: 18),
+            ),
+            const SizedBox(height: 10),
+            Text(
+              label,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 12,
+                color: Color(0xFF0F172A),
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              distance,
+              style: const TextStyle(
+                fontSize: 10,
+                color: Color(0xFF64748B),
+                fontWeight: FontWeight.w500,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      ),
     );
   }
 

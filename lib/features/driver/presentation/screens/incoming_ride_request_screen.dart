@@ -92,8 +92,9 @@ class _IncomingRideRequestScreenState extends ConsumerState<IncomingRideRequestS
     });
 
     if (error == null) {
+      ref.read(activeDriverRideIdProvider.notifier).state = _rideId;
       context.showSnackBar("Ride request accepted!", backgroundColor: Colors.green);
-      Navigator.pushReplacementNamed(context, '/driver-to-pickup');
+      Navigator.pushReplacementNamed(context, '/driver-to-pickup', arguments: _rideId);
     } else {
       context.showSnackBar(error, backgroundColor: Colors.red);
       Navigator.pop(context);
@@ -123,9 +124,9 @@ class _IncomingRideRequestScreenState extends ConsumerState<IncomingRideRequestS
     final riderName = _rideData?['riderName'] as String? ?? "Passenger";
     final pickup = _rideData?['pickupAddress'] as String? ?? "Pickup Address";
     final dest = _rideData?['destinationAddress'] as String? ?? "Destination Address";
-    final distance = _rideData?['distanceKm'] as double? ?? 1.2;
-    final duration = _rideData?['estimatedDurationMinutes'] as double? ?? 14.0;
-    final fare = _rideData?['estimatedFare'] as double? ?? 68.0;
+    final distance = (_rideData?['distanceKm'] as num?)?.toDouble() ?? 1.2;
+    final duration = (_rideData?['estimatedDurationMinutes'] as num?)?.toDouble() ?? 14.0;
+    final fare = (_rideData?['estimatedFare'] as num?)?.toDouble() ?? 68.0;
 
     // Driver gets 85% of fare as estimated earnings
     final earnings = fare * 0.85;

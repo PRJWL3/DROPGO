@@ -72,3 +72,6 @@ final appModeColorsProvider = Provider<AppModeColors>((ref) {
     );
   }
 });
+
+// Global provider tracking the driver's active rideId
+final activeDriverRideIdProvider = StateProvider<String?>((ref) => null);

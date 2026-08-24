@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -376,63 +377,88 @@ class FirebaseService {
     required String driverName,
     required String driverVehicleNumber,
   }) async {
+    // Generate the random 4-digit OTP ONCE before the transaction starts (Step 1)
+    final String generatedOtp = (1000 + Random().nextInt(9000)).toString();
+
     if (isFirebaseAvailable) {
       try {
         final rideRef = FirebaseFirestore.instance.collection('rides').doc(rideId);
         final driverRef = FirebaseFirestore.instance.collection('drivers').doc(driverId);
+ 
+        // Pre-fetch initial states for ACCEPT RIDE DEBUG logging
+        final initialDriverSnap = await driverRef.get();
+        final initialRideSnap = await rideRef.get();
+        final driverOnlineBefore = initialDriverSnap.exists ? (initialDriverSnap.data()?['isOnline'] as bool? ?? false) : false;
+        final driverAvailableBefore = initialDriverSnap.exists ? (initialDriverSnap.data()?['isAvailable'] as bool? ?? false) : false;
+        final rideStatusBefore = initialRideSnap.exists ? (initialRideSnap.data()?['status'] as String? ?? 'none') : 'none';
 
         final result = await FirebaseFirestore.instance.runTransaction((transaction) async {
           final rideSnapshot = await transaction.get(rideRef);
           final driverSnapshot = await transaction.get(driverRef);
-
+ 
           if (!rideSnapshot.exists) return "Ride request does not exist";
-
+ 
           final rideData = rideSnapshot.data()!;
           final status = rideData['status'] as String;
           final expiresTimestamp = rideData['expiresAt'] as Timestamp;
           final expiresAt = expiresTimestamp.toDate();
-
+ 
           // 1. Verify status is still searching
           if (status != 'searching') {
             return "Ride already accepted";
           }
-
+ 
           // 2. Verify ride has not expired
           if (DateTime.now().isAfter(expiresAt)) {
             return "Ride request expired";
           }
-
+ 
           if (driverSnapshot.exists) {
             final driverData = driverSnapshot.data()!;
             final isOnline = driverData['isOnline'] as bool? ?? false;
             final isAvailable = driverData['isAvailable'] as bool? ?? false;
             final vehicleType = driverData['vehicleType'] as String? ?? "";
-
+ 
             // 3. Verify driver online & available status
             if (!isOnline) return "Driver is offline";
             if (!isAvailable) return "Driver is not available";
-
+ 
             // 4. Verify driver vehicle type matches requested vehicle type
             if (vehicleType != rideData['vehicleType']) {
               return "Driver vehicle type mismatch";
             }
           }
-
-          // Atomic updates
+ 
+          // Atomic updates - Only write the generated OTP if status == "searching" (Step 2)
           transaction.update(rideRef, {
             'status': 'accepted',
             'driverId': driverId,
             'driverName': driverName,
             'driverVehicleNumber': driverVehicleNumber,
             'acceptedAt': FieldValue.serverTimestamp(),
+            'otp': generatedOtp, // Step 4
           });
-
+ 
           transaction.update(driverRef, {
             'isAvailable': false,
           });
-
+ 
           return null; // Success
         }).timeout(const Duration(seconds: 15));
+ 
+        // Post-fetch updated availability
+        final updatedDriverSnap = await driverRef.get();
+        final updatedAvailable = updatedDriverSnap.exists ? (updatedDriverSnap.data()?['isAvailable'] as bool? ?? false) : false;
+
+        debugPrint("========== ACCEPT RIDE DEBUG ==========");
+        debugPrint("Driver ID: $driverId");
+        debugPrint("Driver isOnline: $driverOnlineBefore");
+        debugPrint("Driver isAvailable: $driverAvailableBefore");
+        debugPrint("Ride ID: $rideId");
+        debugPrint("Ride status: $rideStatusBefore");
+        debugPrint("Acceptance result: ${result ?? 'SUCCESS'}");
+        debugPrint("Updated driver availability: $updatedAvailable");
+        debugPrint("=======================================");
 
         if (result == null) {
           debugPrint("DRIVER: Ride accepted: $rideId");
@@ -451,46 +477,124 @@ class FirebaseService {
       // Local Mode atomic check
       final rideData = _localRides[rideId];
       if (rideData == null) return "Ride request does not exist";
-
+ 
       final status = rideData['status'] as String;
       final expiresAt = rideData['expiresAt'] as DateTime;
-
+ 
       if (status != 'searching') {
         return "Ride already accepted";
       }
-
+ 
       if (DateTime.now().isAfter(expiresAt)) {
         return "Ride request expired";
       }
-
+ 
       final driverData = _localDrivers[driverId];
       if (driverData != null) {
         final isOnline = driverData['isOnline'] as bool? ?? false;
         final isAvailable = driverData['isAvailable'] as bool? ?? false;
         final vehicleType = driverData['vehicleType'] as String? ?? "";
-
+ 
         if (!isOnline) return "Driver is offline";
         if (!isAvailable) return "Driver is not available";
         if (vehicleType != rideData['vehicleType']) {
           return "Driver vehicle type mismatch";
         }
       }
-
+ 
       // Update local maps
       rideData['status'] = 'accepted';
       rideData['driverId'] = driverId;
       rideData['driverName'] = driverName;
       rideData['driverVehicleNumber'] = driverVehicleNumber;
       rideData['acceptedAt'] = DateTime.now();
-
+      rideData['otp'] = generatedOtp;
+ 
       if (driverData != null) {
         driverData['isAvailable'] = false;
       }
-
+ 
       _localRides[rideId] = rideData;
       _getOrCreateRideController(rideId).add(rideData);
-
+ 
       debugPrint("DRIVER: Ride accepted: $rideId");
+      return null; // Success
+    }
+  }
+
+  /// Atomic Firestore transaction to verify Rider OTP and start trip (Step 10 & 11)
+  static Future<String?> verifyRideOtp({
+    required String rideId,
+    required String driverId,
+    required String submittedOtp,
+  }) async {
+    if (isFirebaseAvailable) {
+      try {
+        final rideRef = FirebaseFirestore.instance.collection('rides').doc(rideId);
+        
+        final result = await FirebaseFirestore.instance.runTransaction((transaction) async {
+          final rideSnapshot = await transaction.get(rideRef);
+          if (!rideSnapshot.exists) {
+            return "Ride request does not exist";
+          }
+          
+          final rideData = rideSnapshot.data()!;
+          final status = rideData['status'] as String? ?? '';
+          final storedDriverId = rideData['driverId'] as String? ?? '';
+          final storedOtp = rideData['otp'] as String? ?? '';
+          
+          // Validation checks (Step 10)
+          if (status != 'accepted' && status != 'driver_arrived') {
+            return "Ride is not in accepted or driver_arrived state";
+          }
+          if (storedDriverId != driverId) {
+            return "Unauthorized driver for this ride";
+          }
+          if (storedOtp != submittedOtp) {
+            return "Incorrect OTP";
+          }
+          
+          // Atomic update on success (Step 11)
+          transaction.update(rideRef, {
+            'status': 'in_progress',
+            'startedAt': FieldValue.serverTimestamp(),
+          });
+          
+          return null; // Success
+        }).timeout(const Duration(seconds: 15));
+        
+        return result;
+      } catch (e) {
+        if (e.toString().contains("permission-denied") || e.toString().contains("permission_denied")) {
+          return "PERMISSION-DENIED: verifyRideOtp. Error: $e";
+        }
+        return "Transaction failed: $e";
+      }
+    } else {
+      // Local Mode verification fallback
+      final rideData = _localRides[rideId];
+      if (rideData == null) return "Ride request does not exist";
+      
+      final status = rideData['status'] as String? ?? '';
+      final storedDriverId = rideData['driverId'] as String? ?? '';
+      final storedOtp = rideData['otp'] as String? ?? '';
+      
+      if (status != 'accepted' && status != 'driver_arrived') {
+        return "Ride is not in accepted or driver_arrived state";
+      }
+      if (storedDriverId != driverId) {
+        return "Unauthorized driver for this ride";
+      }
+      if (storedOtp != submittedOtp) {
+        return "Incorrect OTP";
+      }
+      
+      rideData['status'] = 'in_progress';
+      rideData['startedAt'] = DateTime.now();
+      
+      _localRides[rideId] = rideData;
+      _getOrCreateRideController(rideId).add(rideData);
+      
       return null; // Success
     }
   }
@@ -544,8 +648,8 @@ class FirebaseService {
         final vehicleType = d['vehicleType'] as String? ?? "";
 
         if (isOnline && isAvailable && vehicleType == 'bike') {
-          final lat = d['currentLatitude'] as double;
-          final lng = d['currentLongitude'] as double;
+          final lat = (d['currentLatitude'] as num).toDouble();
+          final lng = (d['currentLongitude'] as num).toDouble();
 
           // Simple flat Euclidean distance estimate for MVP radius
           final double diffLat = lat - pickupLat;
@@ -561,7 +665,7 @@ class FirebaseService {
       }
 
       // Sort candidate drivers by distance from pickup
-      eligibleDrivers.sort((a, b) => (a['distSq'] as double).compareTo(b['distSq'] as double));
+      eligibleDrivers.sort((a, b) => ((a['distSq'] as num).toDouble()).compareTo((b['distSq'] as num).toDouble()));
 
       debugPrint("LOCAL SIMULATION MODE: Nearby drivers found: ${eligibleDrivers.length}");
 

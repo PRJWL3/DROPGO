@@ -9,6 +9,7 @@ import '../../../../core/utils/extensions.dart';
 import '../../../../core/providers/location_provider.dart';
 import '../../../../core/services/places_service.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../models/ride_model.dart';
 import '../../providers/ride_provider.dart';
 
@@ -34,27 +35,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   bool _isLoadingPickupSuggestions = false;
   bool _isLoadingDestinationSuggestions = false;
   bool _isLoadingRoute = false;
-  Timer? _debounce;
+  
+  Timer? _pickupDebounce;
+  Timer? _destinationDebounce;
+  int _pickupQueryId = 0;
+  int _destinationQueryId = 0;
 
   SearchFieldType _activeField = SearchFieldType.destination;
 
-  final List<String> _recentPickups = [
-    "Bangalore City Railway Station",
-    "Koramangala 3rd Block, Bengaluru",
-  ];
-
-  final List<String> _recentDestinations = [
-    "Kempegowda International Airport",
-    "Manyata Tech Park, Bengaluru",
-  ];
-
-  final List<Map<String, String>> _popularPlaces = [
-    {"name": "Indiranagar", "address": "Bengaluru, Karnataka"},
-    {"name": "Koramangala 5th Block", "address": "Bengaluru, Karnataka"},
-    {"name": "Whitefield", "address": "Bengaluru, Karnataka"},
-    {"name": "UB City", "address": "Bengaluru, Karnataka"},
-    {"name": "Nexus Mall", "address": "Bengaluru, Karnataka"},
-  ];
+  List<String> _recentPickups = [];
+  List<String> _recentDestinations = [];
+  List<Map<String, String>> _popularPlaces = [];
 
   @override
   void initState() {
@@ -65,6 +56,16 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
     _pickupController.addListener(_onPickupSearchChanged);
     _destinationController.addListener(_onDestinationSearchChanged);
+
+    // Initialize recent lists dynamically from real ride history (live recently visited places)
+    _recentPickups = bookingState.pastRides.map((r) => r.pickup.name).toSet().take(5).toList();
+    _recentDestinations = bookingState.pastRides.map((r) => r.destination.name).toSet().take(5).toList();
+
+    // Initialize popular places dynamically from saved places (Home, Work, etc.)
+    _popularPlaces = bookingState.savedPlaces.map((sp) => {
+      "name": sp.label,
+      "address": sp.address,
+    }).toList();
   }
 
   @override
@@ -73,15 +74,17 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
     _destinationController.removeListener(_onDestinationSearchChanged);
     _pickupController.dispose();
     _destinationController.dispose();
-    _debounce?.cancel();
+    _pickupDebounce?.cancel();
+    _destinationDebounce?.cancel();
     super.dispose();
   }
 
   void _onPickupSearchChanged() {
     final query = _pickupController.text;
-    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    if (_pickupDebounce?.isActive ?? false) _pickupDebounce!.cancel();
     
     if (query.trim().length < 2) {
+      _pickupQueryId++; // Invalidate pending queries
       setState(() {
         _pickupSuggestions = [];
         _isLoadingPickupSuggestions = false;
@@ -89,28 +92,35 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       return;
     }
 
-    _debounce = Timer(const Duration(milliseconds: 300), () async {
+    _pickupQueryId++;
+    final currentQueryId = _pickupQueryId;
+
+    _pickupDebounce = Timer(const Duration(milliseconds: 300), () async {
       if (!mounted) return;
       setState(() {
         _isLoadingPickupSuggestions = true;
       });
       final service = ref.read(placesServiceProvider);
-      debugPrint("Pickup Autocomplete Search Query: '$query'");
+      debugPrint("Pickup Autocomplete Search Query: '$query' (ID: $currentQueryId)");
       final list = await service.searchPlaces(query);
-      if (mounted) {
+      if (mounted && currentQueryId == _pickupQueryId) {
         setState(() {
           _pickupSuggestions = list;
           _isLoadingPickupSuggestions = false;
         });
+        debugPrint("Applied Pickup suggestions for ID: $currentQueryId");
+      } else {
+        debugPrint("Discarded stale Pickup suggestions for ID: $currentQueryId (Current ID: $_pickupQueryId)");
       }
     });
   }
 
   void _onDestinationSearchChanged() {
     final query = _destinationController.text;
-    if (_debounce?.isActive ?? false) _debounce!.cancel();
+    if (_destinationDebounce?.isActive ?? false) _destinationDebounce!.cancel();
     
     if (query.trim().length < 2) {
+      _destinationQueryId++; // Invalidate pending queries
       setState(() {
         _destinationSuggestions = [];
         _isLoadingDestinationSuggestions = false;
@@ -118,19 +128,25 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
       return;
     }
 
-    _debounce = Timer(const Duration(milliseconds: 300), () async {
+    _destinationQueryId++;
+    final currentQueryId = _destinationQueryId;
+
+    _destinationDebounce = Timer(const Duration(milliseconds: 300), () async {
       if (!mounted) return;
       setState(() {
         _isLoadingDestinationSuggestions = true;
       });
       final service = ref.read(placesServiceProvider);
-      debugPrint("Destination Autocomplete Search Query: '$query'");
+      debugPrint("Destination Autocomplete Search Query: '$query' (ID: $currentQueryId)");
       final list = await service.searchPlaces(query);
-      if (mounted) {
+      if (mounted && currentQueryId == _destinationQueryId) {
         setState(() {
           _destinationSuggestions = list;
           _isLoadingDestinationSuggestions = false;
         });
+        debugPrint("Applied Destination suggestions for ID: $currentQueryId");
+      } else {
+        debugPrint("Discarded stale Destination suggestions for ID: $currentQueryId (Current ID: $_destinationQueryId)");
       }
     });
   }
@@ -391,6 +407,83 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                 ),
 
                 const SizedBox(height: 20),
+
+                // Use Current Location Option (Always visible under the search bar)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(22),
+                    border: Border.all(color: AppColors.border, width: 1.2),
+                  ),
+                  child: ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 2),
+                    leading: const Icon(
+                      Icons.my_location_rounded,
+                      color: AppColors.primary,
+                      size: 20,
+                    ),
+                    title: const Text(
+                      "Use Current Location",
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                    subtitle: const Text(
+                      "Set starting point to your current position",
+                      style: TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                    trailing: const Icon(
+                      Icons.keyboard_arrow_right_rounded,
+                      color: AppColors.textSecondary,
+                      size: 20,
+                    ),
+                    onTap: () async {
+                      final liveLoc = ref.read(liveLocationProvider).value;
+                      if (liveLoc != null) {
+                        final point = LocationPoint(
+                          latitude: liveLoc.latitude,
+                          longitude: liveLoc.longitude,
+                          name: "Current Location",
+                        );
+                        if (_activeField == SearchFieldType.pickup) {
+                          ref.read(rideBookingNotifierProvider.notifier).selectPickup(point);
+                          _pickupController.text = "Current Location";
+                        } else {
+                          ref.read(rideBookingNotifierProvider.notifier).selectDestination(point);
+                          _destinationController.text = "Current Location";
+                        }
+                        context.showSnackBar("Selected current location!");
+                      } else {
+                        context.showSnackBar("Fetching location... please enable location services");
+                        try {
+                          final pos = await Geolocator.getCurrentPosition();
+                          final point = LocationPoint(
+                            latitude: pos.latitude,
+                            longitude: pos.longitude,
+                            name: "Current Location",
+                          );
+                          if (_activeField == SearchFieldType.pickup) {
+                            ref.read(rideBookingNotifierProvider.notifier).selectPickup(point);
+                            _pickupController.text = "Current Location";
+                          } else {
+                            ref.read(rideBookingNotifierProvider.notifier).selectDestination(point);
+                            _destinationController.text = "Current Location";
+                          }
+                          context.showSnackBar("Selected current location!");
+                        } catch (e) {
+                          context.showSnackBar("Could not fetch current location: $e");
+                        }
+                      }
+                    },
+                  ),
+                ),
 
                 // Live Autocomplete Suggestions List
                 if (isSearching) ...[
@@ -653,77 +746,79 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
                       ),
                     ),
 
-                  const SizedBox(height: 24),
+                  if (_popularPlaces.isNotEmpty) ...[
+                    const SizedBox(height: 24),
 
-                  // 4. Popular Places Section Header
-                  const Text(
-                    "Popular Places",
-                    style: TextStyle(
-                      color: AppColors.textPrimary,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                    ),
-                  ),
-
-                  const SizedBox(height: 12),
-
-                  // Popular Places Rounded Card Container
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(22),
-                      border: Border.all(color: AppColors.border, width: 1.2),
-                    ),
-                    child: Column(
-                      children: List.generate(_popularPlaces.length, (index) {
-                        final place = _popularPlaces[index];
-                        final isLast = index == _popularPlaces.length - 1;
-
-                        return Column(
-                          children: [
-                            ListTile(
-                              contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-                              leading: const Icon(
-                                  Icons.location_on_rounded,
-                                  color: AppColors.primary,
-                                  size: 22,
-                                ),
-                                title: Text(
-                                  place['name']!,
-                                  style: const TextStyle(
-                                    color: AppColors.textPrimary,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  place['address']!,
-                                  style: const TextStyle(
-                                    color: AppColors.textSecondary,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                                trailing: const Icon(
-                                  Icons.keyboard_arrow_right_rounded,
-                                  color: AppColors.textSecondary,
-                                  size: 20,
-                                ),
-                                onTap: () => _selectLocation(place['name']!),
-                              ),
-                              if (!isLast)
-                                const Divider(
-                                  height: 1,
-                                  thickness: 1,
-                                  color: AppColors.border,
-                                  indent: 20,
-                                  endIndent: 20,
-                                ),
-                            ],
-                          );
-                        }),
+                    // 4. Popular Places Section Header
+                    const Text(
+                      "Popular Places",
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
                       ),
                     ),
+
+                    const SizedBox(height: 12),
+
+                    // Popular Places Rounded Card Container
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(22),
+                        border: Border.all(color: AppColors.border, width: 1.2),
+                      ),
+                      child: Column(
+                        children: List.generate(_popularPlaces.length, (index) {
+                          final place = _popularPlaces[index];
+                          final isLast = index == _popularPlaces.length - 1;
+
+                          return Column(
+                            children: [
+                              ListTile(
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                                leading: const Icon(
+                                    Icons.location_on_rounded,
+                                    color: AppColors.primary,
+                                    size: 22,
+                                  ),
+                                  title: Text(
+                                    place['name']!,
+                                    style: const TextStyle(
+                                      color: AppColors.textPrimary,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  subtitle: Text(
+                                    place['address']!,
+                                    style: const TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                  trailing: const Icon(
+                                    Icons.keyboard_arrow_right_rounded,
+                                    color: AppColors.textSecondary,
+                                    size: 20,
+                                  ),
+                                  onTap: () => _selectLocation(place['name']!),
+                                ),
+                                if (!isLast)
+                                  const Divider(
+                                    height: 1,
+                                    thickness: 1,
+                                    color: AppColors.border,
+                                    indent: 20,
+                                    endIndent: 20,
+                                  ),
+                              ],
+                            );
+                          }),
+                        ),
+                      ),
+                    ],
 
                   const SizedBox(height: 32),
                 ],
